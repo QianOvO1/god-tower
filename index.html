@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>神明之塔 · 8-BIT 像素爬塔</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<main class="stage" id="stage" data-ui-state="MENU">
+  <canvas id="gameCanvas" width="1280" height="800" aria-label="神明之塔俯视角射击游戏"></canvas>
+  <div class="frost-overlay" id="frostOverlay" hidden aria-hidden="true"></div>
+
+  <!-- ==================== 游戏内 HUD ==================== -->
+  <div class="hud-layer" id="hudLayer" hidden aria-label="游戏状态">
+    <div class="hud hud--left" id="hud">
+      <div class="hud-line">
+        <span class="hud-label">HP:</span>
+        <span class="hud-value" id="hpText">10/10</span>
+        <span class="hud-potion" id="hudPotion" title="Q：回复 3 HP">
+          <i class="hud-potion__icon" aria-hidden="true"></i>
+          <b id="potionCount">1</b>
+        </span>
+      </div>
+      <div class="hud-line">
+        <span class="hud-label">翻滚:</span>
+        <span class="hud-value is-ready" id="rollStatus">就绪</span>
+      </div>
+      <div class="hud-line" id="meteorHud" hidden>
+        <span class="meteor-icon" aria-hidden="true"></span>
+        <span class="hud-label">陨石:</span>
+        <span class="hud-value is-ready" id="meteorStatus">就绪</span>
+      </div>
+
+      <!-- game.js 兼容数据节点：保留但不显示 -->
+      <i class="legacy-stat" id="hpFill"></i>
+      <i class="legacy-stat" id="orbFill"></i>
+      <span id="orbText">就绪</span>
+      <i class="legacy-stat" id="monsterFill"></i>
+      <span id="monsterText">0 只</span>
+      <span id="chaseText">0 / 4</span>
+      <span id="levelLabel">第一层 · 林间试炼</span>
+    </div>
+
+    <div class="hud hud--right">
+      <div id="floorLabel">第 1 层</div>
+      <div id="roomProgress">房间 1 / 4</div>
+    </div>
+
+    <div class="cold-hud" id="coldHud" hidden aria-label="寒冷值">
+      <span class="cold-hud__label">寒冷</span>
+      <div class="cold-hud__bar"><i id="coldFill"></i></div>
+      <span class="cold-hud__value" id="coldText">0/100</span>
+    </div>
+
+    <!-- Boss 血条：普通房间自动隐藏 -->
+    <section class="boss-hud" id="bossHud" hidden aria-label="Boss 状态">
+      <div class="boss-hud__head">
+        <span><span id="bossNameText">BOSS · 树妖</span> <small id="bossRoomText">BOSS ROOM</small></span>
+        <span class="boss-hud__damage" id="bossDamageText" aria-hidden="true"></span>
+        <span class="boss-hud__state" id="bossStateText">一阶段</span>
+      </div>
+      <div class="boss-hud__bar"><i id="bossFill"></i></div>
+      <div class="boss-hud__meta">
+        <span>HP <b id="bossHpText">100 / 100</b></span>
+        <span><span id="bossMetaLabelA">生成树</span> <b id="bossTreeText">0 / 5</b></span>
+        <span><span id="bossMetaLabelB">移速</span> <b id="bossSpeedText">一阶段 · 40%</b></span>
+      </div>
+    </section>
+
+    <div class="controls">
+      <b>WASD</b> 移动　·　<b>Shift/Space</b> 翻滚　·　<b>Q</b> 药水　·　<b>鼠标左键</b> 发射　·　<b>E/右键</b> 陨石　·　<b>R</b> 重开　·　<b>F1</b> 调试
+      <span id="controlsHint">　|　清空当前房间后，上方门解锁；下方门可返回</span>
+    </div>
+
+    <div class="toast" id="toast" hidden role="status" aria-live="polite">先清理所有敌人</div>
+  </div>
+
+  <!-- ==================== 主菜单 ==================== -->
+  <div class="screen main-menu" id="main-menu" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
+    <div class="menu-bg" aria-hidden="true">
+      <div class="pixel-stars">
+        <i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <div class="pixel-tower">
+        <i class="tower-spire"></i>
+        <i class="tower-crown"></i>
+        <i class="tower-body"></i>
+        <i class="tower-base"></i>
+        <i class="tower-window tower-window--1"></i>
+        <i class="tower-window tower-window--2"></i>
+        <i class="tower-window tower-window--3"></i>
+        <i class="tower-window tower-window--4"></i>
+      </div>
+    </div>
+
+    <div class="menu-card">
+      <div class="menu-kicker">A PIXEL ROGUELIKE</div>
+      <h1 class="menu-title" id="menuTitle">神明之塔</h1>
+      <div class="menu-rule"></div>
+      <p class="menu-story">
+        传闻，塔顶的神明能实现任何愿望。<br />
+        <em>你毫不犹豫地踏入塔底，却没听到身后的叹息。</em>
+      </p>
+      <button class="ui-button" id="startGameBtn" type="button">开始游戏</button>
+    </div>
+
+    <div class="menu-controls">WASD 移动 · SHIFT 翻滚 · Q 药水 · 鼠标左键射击</div>
+  </div>
+
+  <!-- ==================== 伪加载 ==================== -->
+  <div class="screen loading-screen" id="loading-screen" hidden role="status" aria-live="polite">
+    <div class="loading-card">
+      <div class="loading-text" id="loadingText">正在踏入第 2 层...</div>
+      <div class="loading-line"></div>
+      <div class="loading-sub">塔层正在重组 · 请稍候</div>
+    </div>
+  </div>
+
+  <!-- ==================== 死亡 ==================== -->
+  <div class="screen death-screen" id="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="overlayTitle">
+    <div class="screen__card">
+      <div class="screen__kicker">THE TOWER REMEMBERS</div>
+      <h2 class="screen__title" id="overlayTitle">你死了</h2>
+      <p class="screen__text" id="overlayHint">塔不会记住失败。站起来，再走一次。</p>
+      <button class="ui-button" id="retryBtn" type="button">重新挑战</button>
+      <div class="screen__hint">也可以按 R 重置本层</div>
+    </div>
+  </div>
+
+  <!-- ==================== Boss 结算 / 强化 ==================== -->
+  <div class="screen" id="upgradeOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="upgradeTitle">
+    <div class="reward-card">
+      <div class="reward-kicker" id="upgradeKicker">BOSS CLEARED</div>
+      <h2 class="reward-title" id="upgradeTitle">Boss 已击败</h2>
+      <p class="reward-desc" id="upgradeDesc">选择一项强化，继续向塔顶前进。</p>
+
+      <div class="reward-options" id="rewardOptions">
+        <button class="reward-option" id="upgradeHp" data-upgrade="hp" type="button">
+          <span class="reward-option__key">1</span>
+          <strong>生命上限 +2</strong>
+          <small>并立即回满生命</small>
+        </button>
+        <button class="reward-option reward-option--atk" id="upgradeAtk" data-upgrade="atk" type="button">
+          <span class="reward-option__key">2</span>
+          <strong>法球伤害 +1</strong>
+          <small>让下一层打得更快</small>
+        </button>
+        <button class="reward-option reward-option--weapon" id="upgradeWeapon" data-upgrade="weapon" type="button">
+          <span class="reward-option__key">3</span>
+          <strong>武器流 · 散弹</strong>
+          <small>改变法球形态</small>
+        </button>
+      </div>
+
+      <button class="ui-button reward-restart" id="rewardRestart" type="button" hidden>
+        重新挑战第三层
+      </button>
+    </div>
+  </div>
+</main>
+
+<script src="config.js"></script>
+<script src="utils.js"></script>
+<script src="entities.js"></script>
+<script src="player_renderer.js"></script>
+<script src="boss.js"></script>
+<script src="room.js"></script>
+<script src="game.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
