@@ -14,6 +14,8 @@
 
   const GAME_STATES = Object.freeze({
     MENU: 'MENU',
+    INTRO: 'INTRO',
+    ENDING: 'ENDING',
     PLAYING: 'PLAYING',
     LOADING: 'LOADING',
     DEAD: 'DEAD',
@@ -112,6 +114,107 @@
   };
 
   PF.Input = Input;
+
+  const enemySpriteSources = {
+    skeleton: 'assets/skeleton.png',
+    executioner: 'assets/executioner.png'
+  };
+  const enemyArt = {};
+
+  function removeEnemyWhiteBackground(image) {
+    const width = image.naturalWidth;
+    const height = image.naturalHeight;
+    if (!width || !height) return image;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(image, 0, 0);
+    let imageData;
+    try {
+      imageData = ctx.getImageData(0, 0, width, height);
+    } catch {
+      return image;
+    }
+    const data = imageData.data;
+    const visited = new Uint8Array(width * height);
+    const stack = [];
+    const isWhite = (index) =>
+      data[index + 3] > 0 &&
+      data[index] >= 242 &&
+      data[index + 1] >= 242 &&
+      data[index + 2] >= 242;
+    const push = (x, y) => {
+      if (x < 0 || y < 0 || x >= width || y >= height) return;
+      const cell = y * width + x;
+      if (visited[cell]) return;
+      const index = cell * 4;
+      if (!isWhite(index)) return;
+      visited[cell] = 1;
+      stack.push(cell);
+    };
+    for (let x = 0; x < width; x += 1) {
+      push(x, 0);
+      push(x, height - 1);
+    }
+    for (let y = 0; y < height; y += 1) {
+      push(0, y);
+      push(width - 1, y);
+    }
+    let changed = false;
+    while (stack.length > 0) {
+      const cell = stack.pop();
+      const x = cell % width;
+      const y = Math.floor(cell / width);
+      data[cell * 4 + 3] = 0;
+      changed = true;
+      push(x - 1, y);
+      push(x + 1, y);
+      push(x, y - 1);
+      push(x, y + 1);
+    }
+    if (changed) ctx.putImageData(imageData, 0, 0);
+    return canvas;
+  }
+
+  function buildEnemyFlash(source) {
+    const width = source.width || source.naturalWidth;
+    const height = source.height || source.naturalHeight;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(source, 0, 0);
+    ctx.globalCompositeOperation = 'source-in';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    return canvas;
+  }
+
+  function loadEnemyArt() {
+    for (const [type, src] of Object.entries(enemySpriteSources)) {
+      const image = new Image();
+      const entry = { image, source: null, flash: null, ready: false, failed: false };
+      enemyArt[type] = entry;
+      image.onload = () => {
+        try {
+          entry.source = removeEnemyWhiteBackground(image);
+          entry.flash = buildEnemyFlash(entry.source);
+          entry.ready = true;
+        } catch (error) {
+          console.warn('[EnemyArt]', type, error);
+          entry.failed = true;
+        }
+      };
+      image.onerror = () => { entry.failed = true; };
+      image.src = src;
+    }
+  }
+
+  loadEnemyArt();
+  PF.EnemyArt = enemyArt;
 
   class Game extends RoomSystems {
     constructor() {
@@ -236,6 +339,13 @@
       };
       this.rewardChoices = [];
       this.pendingFinalClear = false;
+      this.intro = null;
+      this.ending = null;
+      this.divineWhisper = null;
+      this.cinematic = null;
+      this.divineIntroPlayed = false;
+      this.divineOrb = null;
+      this.divineDialog = null;
       this.levelExitPortal = null;
       this.bossCheckpoint = null;
       this.deathInBossRoom = false;
@@ -260,13 +370,463 @@
 
     startFromMenu() {
       if (window.currentGameState !== GAME_STATES.MENU) return false;
+      this.beginIntro();
+      return true;
+    }
+
+    beginIntro() {
+      this.intro = {
+        pages: [
+          '神明在世界的中心建了一座高塔，传闻，登顶者可以实现任何愿望。',
+          '你不在乎什么神明，你只知道，病榻上的妻子快要撑不过今晚了。',
+          '为了那一丝渺茫的希望，你握紧了手中破旧的法杖。',
+          '哪怕前方是深渊，哪怕要直面神明。',
+          '你踏入了高塔的第一层。'
+        ],
+        page: 0,
+        typed: 0,
+        charTimer: 0,
+        phase: 'typing',
+        fadeTimer: 0,
+        time: 0
+      };
       this.stage.classList.remove('is-menu');
-      this.setGameState('PLAYING', '开始游戏');
-      this.player.invuln = Math.max(this.player.invuln, 0.8);
+      this.setGameState('INTRO', '开场白');
+      Input.mouse.down = false;
       if (document.activeElement && document.activeElement.blur) {
         document.activeElement.blur();
       }
-      return true;
+    }
+
+    updateIntro(dt) {
+      const intro = this.intro;
+      if (!intro) return;
+      intro.time += dt;
+      if (intro.phase === 'typing') {
+        const page = intro.pages[intro.page];
+        intro.charTimer += dt;
+        while (intro.charTimer >= 0.042 && intro.typed < page.length) {
+          intro.charTimer -= 0.042;
+          intro.typed += 1;
+        }
+        if (intro.typed >= page.length) {
+          intro.phase = 'waiting';
+        }
+      } else if (intro.phase === 'fade') {
+        intro.fadeTimer += dt;
+        if (intro.fadeTimer >= 1.0) this.finishIntro();
+      }
+    }
+
+    advanceIntro() {
+      const intro = this.intro;
+      if (!intro || intro.phase === 'fade') return;
+      const page = intro.pages[intro.page];
+      if (intro.typed < page.length) {
+        intro.typed = page.length;
+        intro.phase = 'waiting';
+        return;
+      }
+      if (intro.page < intro.pages.length - 1) {
+        intro.page += 1;
+        intro.typed = 0;
+        intro.charTimer = 0;
+        intro.phase = 'typing';
+      } else {
+        intro.phase = 'fade';
+        intro.fadeTimer = 0;
+      }
+    }
+
+    skipIntro() {
+      if (!this.intro) return;
+      this.finishIntro(true);
+    }
+
+    finishIntro(skipLoading = false) {
+      if (this.intro === null) return;
+      this.intro = null;
+      this.stage.classList.remove('is-menu');
+      this.player.invuln = Math.max(this.player.invuln, 0.8);
+      if (!skipLoading && this.beginLayerTransition(1)) return;
+      this.startLevel(1, { preservePlayer: false, skipLoadingState: true });
+      this.setGameState('PLAYING', '开场白结束');
+    }
+
+    wrapIntroText(ctx, text, maxWidth) {
+      const lines = [];
+      let line = '';
+      for (const ch of text) {
+        const candidate = line + ch;
+        if (ctx.measureText(candidate).width > maxWidth && line) {
+          lines.push(line);
+          line = ch;
+        } else {
+          line = candidate;
+        }
+      }
+      if (line) lines.push(line);
+      return lines;
+    }
+
+    renderIntro() {
+      const ctx = this.ctx;
+      const W = CFG.WORLD.W;
+      const H = CFG.WORLD.H;
+      const intro = this.intro;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#05060a';
+      ctx.fillRect(0, 0, W, H);
+
+      // 极简星空。
+      for (let i = 0; i < 90; i += 1) {
+        const x = (i * 193 + 47) % W;
+        const y = (i * 83 + 31) % H;
+        const alpha = 0.18 + (Math.sin(intro.time * 1.4 + i) + 1) * 0.16;
+        ctx.fillStyle = `rgba(220, 228, 235, ${alpha})`;
+        const size = i % 7 === 0 ? 2 : 1;
+        ctx.fillRect(x, y, size, size);
+      }
+
+      // 远处高塔剪影。
+      const tx = W / 2;
+      const base = H - 70;
+      ctx.fillStyle = '#0c0e15';
+      ctx.fillRect(tx - 62, 150, 124, base - 150);
+      ctx.fillRect(tx - 80, 128, 160, 30);
+      ctx.fillRect(tx - 44, 96, 88, 36);
+      ctx.fillStyle = '#151924';
+      ctx.fillRect(tx - 40, 154, 80, base - 154);
+      ctx.fillStyle = '#080a10';
+      for (let i = 0; i < 5; i += 1) {
+        ctx.fillRect(tx - 55, 205 + i * 64, 110, 5);
+      }
+      ctx.fillStyle = 'rgba(220, 185, 92, .55)';
+      for (let i = 0; i < 6; i += 1) {
+        const wx = tx - 28 + (i % 2) * 44;
+        const wy = 230 + Math.floor(i / 2) * 85;
+        ctx.fillRect(wx, wy, 8, 12);
+      }
+      ctx.fillStyle = '#07080d';
+      ctx.fillRect(tx - 110, base, 220, 70);
+      const glow = ctx.createRadialGradient(tx, 250, 10, tx, 250, 260);
+      glow.addColorStop(0, 'rgba(196, 165, 90, .10)');
+      glow.addColorStop(1, 'rgba(196, 165, 90, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, W, H);
+
+      if (intro) {
+        const page = intro.pages[intro.page];
+        const shown = page.slice(0, intro.typed);
+        ctx.save();
+        if (intro.phase === 'fade') {
+          ctx.globalAlpha = Math.max(0, 1 - intro.fadeTimer);
+        }
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 20px "Microsoft YaHei", "Courier New", monospace';
+        ctx.fillStyle = '#e9e3d1';
+        ctx.shadowColor = 'rgba(0,0,0,.9)';
+        ctx.shadowBlur = 8;
+        const lines = this.wrapIntroText(ctx, shown, 700);
+        const startY = H / 2 + 40 - (lines.length - 1) * 18;
+        lines.forEach((line, i) => {
+          ctx.fillText(line, W / 2, startY + i * 38);
+        });
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(214, 198, 154, .62)';
+        ctx.font = '12px "Courier New", monospace';
+        ctx.fillText(`${String(intro.page + 1).padStart(2, '0')} / 05`, W / 2, H - 55);
+        ctx.restore();
+
+        if (intro.phase !== 'fade') {
+          ctx.save();
+          ctx.globalAlpha = 0.34 + Math.abs(Math.sin(intro.time * 3.2)) * 0.3;
+          ctx.textAlign = 'right';
+          ctx.font = '13px "Microsoft YaHei", monospace';
+          ctx.fillStyle = '#d9d0b8';
+          ctx.fillText('[ 空格 / 左键 ] 继续', W - 34, H - 34);
+          ctx.restore();
+        }
+      }
+
+      if (intro && intro.phase === 'fade') {
+        ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(1, intro.fadeTimer)})`;
+        ctx.fillRect(0, 0, W, H);
+      }
+    }
+
+    startDivineWhisper(levelId) {
+      const texts = {
+        1: '蝼蚁，你也会为了虚无的执念送死吗？',
+        2: '灵魂的重量，比你想的要轻得多。',
+        3: '时间会风化一切，包括你的爱。',
+        4: '你每杀一个怪物，我就多一分力量。',
+        5: '你就快要见到我了。可你真的敢直视我那张脸吗？',
+        6: '那些死在黑暗里的人，都在为你鼓掌。',
+        7: '来吧。把你的执念，统统献给我。'
+      };
+      const text = texts[levelId];
+      if (!text) {
+        this.divineWhisper = null;
+        return;
+      }
+      this.divineWhisper = {
+        text,
+        timer: 0,
+        duration: 4.2
+      };
+    }
+
+    updateDivineWhisper(dt) {
+      if (!this.divineWhisper) return;
+      this.divineWhisper.timer += dt;
+      if (this.divineWhisper.timer >= this.divineWhisper.duration) {
+        this.divineWhisper = null;
+      }
+    }
+
+    drawDivineWhisper(ctx) {
+      const whisper = this.divineWhisper;
+      if (!whisper) return;
+      const t = whisper.timer;
+      const fadeIn = Math.min(1, t / 0.55);
+      const fadeOut = Math.min(1, (whisper.duration - t) / 0.9);
+      const alpha = Math.max(0, Math.min(fadeIn, fadeOut)) * 0.72;
+      if (alpha <= 0) return;
+      const drift = Math.sin(t * 1.45) * 4;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '18px "Microsoft YaHei", "Courier New", monospace';
+      ctx.fillStyle = '#b8343e';
+      ctx.shadowColor = 'rgba(0,0,0,.85)';
+      ctx.shadowBlur = 10;
+      const lines = this.wrapIntroText(ctx, whisper.text, 820);
+      const startY = CFG.WORLD.H * 0.09 + drift - (lines.length - 1) * 12;
+      lines.forEach((line, i) => {
+        ctx.fillText(line, CFG.WORLD.W / 2, startY + i * 26);
+      });
+      ctx.restore();
+    }
+
+    startEnding() {
+      if (window.currentGameState === GAME_STATES.ENDING || this.ending) return;
+      this.ending = {
+        pages: [
+          '神明的身躯化作无数光点，涌入你的体内。你感受到了前所未有的力量。',
+          '你迫不及待地冲回家，将这股力量倾注在妻子身上。',
+          '然而……她依然没有醒来。即使是神明的伟力，也无法逆转生命的消亡。',
+          '你呆坐在床边，看着她苍白的脸。脑海中回响起神明临死前的话。',
+          '‘死在塔里的所有人，生命力量都会汇聚到塔顶……’',
+          '三天后，世界中心的那座高塔，再次亮起了微光。',
+          '传闻，塔顶依然有一位能实现任何愿望的神明。',
+          '只是这一次，坐在那座纯白王座上的人，是你。'
+        ],
+        page: 0,
+        typed: 0,
+        charTimer: 0,
+        phase: 'typing',
+        blankTimer: 0,
+        time: 0,
+        buttonsTime: 0,
+        buttons: []
+      };
+      this.state = 'ending';
+      this.pendingFinalClear = false;
+      this.intro = null;
+      this.cinematic = null;
+      this.divineOrb = null;
+      this.boss = null;
+      this.enemies.length = 0;
+      this.orbs.reset();
+      this.meteors.length = 0;
+      this.meteorFlashTimer = 0;
+      this.meteorCooldown = 0;
+      this.fireSpiritBombs = [];
+      this.lavaBalls = [];
+      this.evilOrbs = [];
+      this.evilRays = [];
+      this.executionerHooks = [];
+      this.inkPools = [];
+      this.ripples = [];
+      this.whirlpools = [];
+      this.particles.length = 0;
+      this.spikes.length = 0;
+      this.holyOrbs = [];
+      if (this.hud.bossHud) this.hud.bossHud.hidden = true;
+      if (this.overlay) this.overlay.hidden = true;
+      if (this.upgradeOverlay) this.upgradeOverlay.hidden = true;
+      this.stage.classList.remove('is-boss', 'is-dead', 'is-cleared');
+      Input.mouse.down = false;
+      this.setGameState('ENDING', '终局');
+    }
+
+    updateEnding(dt) {
+      const e = this.ending;
+      if (!e) return;
+      e.time += dt;
+      if (e.phase === 'typing') {
+        const page = e.pages[e.page];
+        e.charTimer += dt;
+        while (e.charTimer >= 0.042 && e.typed < page.length) {
+          e.charTimer -= 0.042;
+          e.typed += 1;
+        }
+        if (e.typed >= page.length) e.phase = 'waiting';
+      } else if (e.phase === 'blank') {
+        e.blankTimer += dt;
+        if (e.blankTimer >= 3.0) {
+          e.phase = 'buttons';
+          e.buttonsTime = 0;
+        }
+      } else if (e.phase === 'buttons') {
+        e.buttonsTime += dt;
+      }
+    }
+
+    advanceEnding() {
+      const e = this.ending;
+      if (!e || e.phase === 'blank' || e.phase === 'buttons') return;
+      const page = e.pages[e.page];
+      if (e.typed < page.length) {
+        e.typed = page.length;
+        e.phase = 'waiting';
+        return;
+      }
+      if (e.page < e.pages.length - 1) {
+        e.page += 1;
+        e.typed = 0;
+        e.charTimer = 0;
+        e.phase = 'typing';
+      } else {
+        e.phase = 'blank';
+        e.blankTimer = 0;
+      }
+    }
+
+    endingButtonAt(x, y) {
+      if (!this.ending || this.ending.phase !== 'buttons') return null;
+      for (const button of this.ending.buttons) {
+        if (x >= button.x && x <= button.x + button.w &&
+          y >= button.y && y <= button.y + button.h) {
+          return button.id;
+        }
+      }
+      return null;
+    }
+
+    handleEndingClick(e) {
+      if (!this.ending) return;
+      const rect = this.canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const x = (e.clientX - rect.left) * CFG.WORLD.W / rect.width;
+      const y = (e.clientY - rect.top) * CFG.WORLD.H / rect.height;
+      const button = this.endingButtonAt(x, y);
+      if (button === 'restart') this.restartEnding();
+      else if (button === 'menu') this.returnEndingToMenu();
+    }
+
+    restartEnding() {
+      this.ending = null;
+      this.intro = null;
+      this.divineIntroPlayed = false;
+      this.divine = { meteorLevel: 0, shadowLevel: 0 };
+      this.playerUpgrades = {};
+      this.playerBuild = null;
+      this.meteorCooldown = 0;
+      this.meteors = [];
+      this.stage.classList.remove('is-menu', 'is-dead', 'is-cleared', 'is-boss');
+      this.startLevel(1, { preservePlayer: false, skipLoadingState: true });
+      this.player.invuln = Math.max(this.player.invuln, 0.8);
+      this.setGameState('PLAYING', '重新开始');
+    }
+
+    returnEndingToMenu() {
+      this.ending = null;
+      this.intro = null;
+      this.divineIntroPlayed = false;
+      Input.mouse.down = false;
+      this.stage.classList.add('is-menu');
+      this.setGameState('MENU', '返回主菜单');
+    }
+
+    renderEnding() {
+      const ctx = this.ctx;
+      const W = CFG.WORLD.W;
+      const H = CFG.WORLD.H;
+      const e = this.ending;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, W, H);
+
+      if (!e || e.phase === 'blank') return;
+
+      if (e.phase === 'typing' || e.phase === 'waiting') {
+        const page = e.pages[e.page];
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '20px "Microsoft YaHei", "Courier New", monospace';
+        ctx.fillStyle = '#f2f2f2';
+        const lines = this.wrapIntroText(ctx, page.slice(0, e.typed), 700);
+        const startY = H / 2 - (lines.length - 1) * 18;
+        lines.forEach((line, i) => {
+          ctx.fillText(line, W / 2, startY + i * 38);
+        });
+        if (e.phase === 'waiting') {
+          ctx.globalAlpha = 0.28 + Math.abs(Math.sin(e.time * 3)) * 0.24;
+          ctx.textAlign = 'right';
+          ctx.font = '12px "Courier New", monospace';
+          ctx.fillStyle = '#d0d0d0';
+          ctx.fillText('[ 空格 / 左键 ] 继续', W - 34, H - 32);
+        }
+        ctx.restore();
+        return;
+      }
+
+      if (e.phase === 'buttons') {
+        const alpha = Math.min(1, e.buttonsTime * 2.2);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        const bw = 220;
+        const bh = 52;
+        const gap = 30;
+        const y = H / 2 + 40;
+        const buttons = [
+          {
+            id: 'restart', label: '重新开始',
+            x: W / 2 - bw - gap / 2, y, w: bw, h: bh
+          },
+          {
+            id: 'menu', label: '返回主菜单',
+            x: W / 2 + gap / 2, y, w: bw, h: bh
+          }
+        ];
+        e.buttons = buttons;
+        for (const button of buttons) {
+          const hover = Input.mouse.x >= button.x &&
+            Input.mouse.x <= button.x + button.w &&
+            Input.mouse.y >= button.y &&
+            Input.mouse.y <= button.y + button.h;
+          ctx.fillStyle = hover ? 'rgba(42, 42, 42, .88)' : 'rgba(18, 18, 18, .82)';
+          ctx.fillRect(button.x, button.y, button.w, button.h);
+          ctx.strokeStyle = hover ? '#e2dcc8' : 'rgba(180, 174, 158, .55)';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(button.x, button.y, button.w, button.h);
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.font = '16px "Microsoft YaHei", monospace';
+          ctx.fillStyle = hover ? '#ffffff' : '#d8d3c4';
+          ctx.fillText(
+            button.label,
+            button.x + button.w / 2,
+            button.y + button.h / 2
+          );
+        }
+        ctx.restore();
+      }
     }
 
     beginLayerTransition(levelId) {
@@ -307,8 +867,243 @@
       this.player.hp = this.player.maxHp;
       this.player.cold = 0;
       this.player.potionCharges = CFG.POTION.CHARGES;
+      if (levelId === 8) {
+        this.enterRoom(this.levelRooms.length - 1, 'forward');
+        this.showToast('调试跳转 · 最终层 · 神明之巅', 1.8);
+        return true;
+      }
       this.showToast(`调试跳转 · ${level.layerName} · ${level.name}`, 1.8);
       return true;
+    }
+
+    ensureDivineDialog() {
+      if (this.divineDialog) return this.divineDialog;
+      const host = document.querySelector('.stage') || document.body;
+      const dialog = document.createElement('div');
+      dialog.id = 'divineDialog';
+      dialog.style.cssText = [
+        'position:absolute', 'left:50%', 'bottom:12%',
+        'transform:translateX(-50%)', 'width:min(760px,78%)',
+        'padding:18px 24px', 'box-sizing:border-box',
+        'background:rgba(18,14,9,.90)',
+        'border:2px solid #d9b45a', 'border-radius:4px',
+        'box-shadow:0 0 34px rgba(236,195,95,.32)',
+        'color:#f8efd5', 'font:17px/1.9 "Microsoft YaHei",sans-serif',
+        'letter-spacing:.5px', 'white-space:pre-line',
+        'pointer-events:none', 'z-index:40', 'display:none'
+      ].join(';');
+      dialog.hidden = true;
+      host.appendChild(dialog);
+      this.divineDialog = dialog;
+      return dialog;
+    }
+
+    startDivineIntro() {
+      this.divineIntroPlayed = true;
+      this.cinematic = {
+        phase: 'appear',
+        time: 0,
+        lineIndex: 0,
+        chars: 0,
+        charTimer: 0,
+        pause: 0,
+        hold: 0,
+        ambushTimer: 0
+      };
+      this.ensureDivineDialog();
+      Input.mouse.down = false;
+      this.player.moving = false;
+      this.player.knockX = 0;
+      this.player.knockY = 0;
+      if (this.boss) {
+        this.boss.introVisible = true;
+        this.boss.skillState = 'idle';
+      }
+      this.addShake(2.5, 0.3);
+    }
+
+    updateDivineIntro(dt) {
+      const c = this.cinematic;
+      if (!c) return;
+      c.time += dt;
+      const line1 = '凡人，你以为我是因为无聊才建这座塔的吗？';
+      const line2 = '我的生命即将走到尽头……这里只是我的电池，死在塔里的所有人，他们的生命力量，都汇聚到了我这里！';
+
+      if (c.phase === 'appear') {
+        if (c.time >= 0.55) {
+          c.phase = 'typing';
+          this.divineDialog.hidden = false;
+          this.divineDialog.style.display = 'block';
+          this.divineDialog.textContent = '▌';
+          this.spawnBurst(
+            this.boss.x, this.boss.y, 30,
+            ['#fff4c2', '#ffd76b', '#ffffff'], 160, 0.8
+          );
+        }
+        return;
+      }
+
+      if (c.phase === 'typing') {
+        if (c.pause > 0) {
+          c.pause = Math.max(0, c.pause - dt);
+          return;
+        }
+        c.charTimer += dt;
+        if (c.charTimer < 0.035) return;
+        c.charTimer = 0;
+        const current = c.lineIndex === 0 ? line1 : line2;
+        c.chars += 1;
+        if (c.chars >= current.length) {
+          c.lineIndex += 1;
+          c.chars = 0;
+          if (c.lineIndex >= 2) {
+            c.phase = 'hold';
+            c.hold = 0.9;
+          } else {
+            c.pause = 0.45;
+          }
+        }
+        let text = c.lineIndex > 0 ? line1 : line1.slice(0, c.chars);
+        if (c.lineIndex >= 1) {
+          text += '\n' + (c.lineIndex > 1 ? line2 : line2.slice(0, c.chars));
+        }
+        this.divineDialog.textContent = text + (c.phase === 'typing' ? '▌' : '');
+        return;
+      }
+
+      if (c.phase === 'hold') {
+        c.hold = Math.max(0, c.hold - dt);
+        this.divineDialog.textContent = line1 + '\n' + line2;
+        if (c.hold === 0) this.executeDivineAmbush();
+        return;
+      }
+
+      if (c.phase === 'ambush') {
+        c.ambushTimer += dt;
+        if (c.ambushTimer >= 0.75) {
+          this.cinematic = null;
+          this.divineDialog.hidden = true;
+          this.divineDialog.style.display = 'none';
+          Input.mouse.down = false;
+        }
+      }
+    }
+
+    executeDivineAmbush() {
+      const c = this.cinematic;
+      if (!c || c.phase === 'ambush') return;
+      c.phase = 'ambush';
+      c.ambushTimer = 0;
+      const player = this.player;
+      const boss = this.boss;
+      if (boss) {
+        boss.x = clamp(player.x + 125, 120, CFG.WORLD.W - 120);
+        boss.y = clamp(player.y, 120, CFG.WORLD.H - 120);
+        boss.contactCooldown = 0;
+        boss.contactRecoilTimer = 0;
+        boss.moving = false;
+        boss.introVisible = true;
+      }
+      this.divineOrb = {
+        x: player.x,
+        y: player.y,
+        radius: 72,
+        life: 0.7,
+        maxLife: 0.7
+      };
+      player.takeTrueDamage(3);
+      this.addShake(9, 0.55);
+      this.spawnBurst(
+        player.x, player.y, 34,
+        ['#fff4c2', '#ffd76b', '#ffffff', '#d8b04e'], 210, 0.8
+      );
+    }
+
+    updateDivineOrb(dt) {
+      if (!this.divineOrb) return;
+      this.divineOrb.life -= dt;
+      if (this.divineOrb.life <= 0) this.divineOrb = null;
+    }
+
+    drawDeityOverlays(ctx) {
+      const boss = this.boss;
+      if (!boss || boss.type !== 'deity') return;
+      if (boss.rageMode) {
+        ctx.save();
+        const edge = 46;
+        const red = 'rgba(185, 22, 24, .34)';
+        ctx.fillStyle = red;
+        ctx.fillRect(0, 0, CFG.WORLD.W, edge);
+        ctx.fillRect(0, CFG.WORLD.H - edge, CFG.WORLD.W, edge);
+        ctx.fillRect(0, 0, edge, CFG.WORLD.H);
+        ctx.fillRect(CFG.WORLD.W - edge, 0, edge, CFG.WORLD.H);
+        ctx.restore();
+      }
+      if (boss.timeStopActive) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(95, 95, 98, .38)';
+        ctx.fillRect(0, 0, CFG.WORLD.W, CFG.WORLD.H);
+        ctx.restore();
+      }
+      if (boss.skillState === 'ultimate') {
+        ctx.save();
+        ctx.fillStyle = 'rgba(255, 252, 240, .64)';
+        ctx.fillRect(0, 0, CFG.WORLD.W, CFG.WORLD.H);
+        const n = Math.max(1, Math.ceil(boss.ultimateTimer));
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 28px "Microsoft YaHei", sans-serif';
+        ctx.fillStyle = '#8e2c20';
+        ctx.fillText('终极毁灭 · 击碎神明', CFG.WORLD.W / 2, CFG.WORLD.H / 2 - 190);
+        ctx.font = 'bold 190px "Microsoft YaHei", sans-serif';
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = '#7d251d';
+        ctx.strokeText(String(n), CFG.WORLD.W / 2, CFG.WORLD.H / 2);
+        ctx.fillStyle = '#c53a26';
+        ctx.fillText(String(n), CFG.WORLD.W / 2, CFG.WORLD.H / 2);
+        ctx.restore();
+      }
+    }
+
+    drawSilenceMark(ctx) {
+      if (!this.player || this.player.silenceTimer <= 0) return;
+      const x = this.player.x;
+      const y = this.player.y - 42;
+      ctx.save();
+      ctx.fillStyle = 'rgba(220, 40, 45, .85)';
+      ctx.beginPath();
+      ctx.moveTo(x, y - 12);
+      ctx.lineTo(x + 8, y);
+      ctx.lineTo(x, y + 12);
+      ctx.lineTo(x - 8, y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#ffe9c2';
+      ctx.font = 'bold 12px "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`沉默 ${Math.ceil(this.player.silenceTimer)}`, x, y - 20);
+      ctx.restore();
+    }
+
+    drawDivineOrb(ctx) {
+      if (!this.divineOrb) return;
+      const orb = this.divineOrb;
+      const t = 1 - orb.life / orb.maxLife;
+      ctx.save();
+      ctx.globalAlpha = 1 - t * 0.75;
+      ctx.fillStyle = 'rgba(255, 224, 128, .20)';
+      ctx.beginPath();
+      ctx.arc(orb.x, orb.y, orb.radius * (1 + t * 0.35), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255, 236, 166, .72)';
+      ctx.beginPath();
+      ctx.arc(orb.x, orb.y, orb.radius * (0.55 + t * 0.2), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(orb.x, orb.y, orb.radius * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
 
     debugToggleGodMode() {
@@ -349,6 +1144,29 @@
       window.addEventListener('keydown', (e) => {
         console.log('Key pressed:', e.key);
         if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (window.currentGameState === GAME_STATES.ENDING) {
+          if (e.code === 'Space' || e.code === 'Enter') {
+            e.preventDefault();
+            if (!e.repeat) this.advanceEnding();
+          } else {
+            e.preventDefault();
+          }
+          return;
+        }
+        if (window.currentGameState === GAME_STATES.INTRO) {
+          if (e.code === 'Escape') {
+            e.preventDefault();
+            if (!e.repeat) this.skipIntro();
+            return;
+          }
+          if (e.code === 'Space' || e.code === 'Enter') {
+            e.preventDefault();
+            if (!e.repeat) this.advanceIntro();
+            return;
+          }
+          e.preventDefault();
+          return;
+        }
         if (e.code === 'KeyR' && !e.repeat) {
           e.preventDefault();
           // 结算、死亡、异常卡帧时都允许强制重置。
@@ -402,7 +1220,8 @@
           Digit4: 4, Numpad4: 4,
           Digit5: 5, Numpad5: 5,
           Digit6: 6, Numpad6: 6,
-          Digit7: 7, Numpad7: 7
+          Digit7: 7, Numpad7: 7,
+          Digit8: 8, Numpad8: 8
         }[e.code];
         // 结算界面保留 1/2/3 选择奖励；其他时候 1~5 用于调试跳层。
         const thirdReward = this.state === 'levelClear' &&
@@ -456,6 +1275,19 @@
           this.castMeteor();
         }
       });
+      window.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (window.currentGameState === GAME_STATES.INTRO) {
+          e.preventDefault();
+          this.advanceIntro();
+          return;
+        }
+        if (window.currentGameState === GAME_STATES.ENDING) {
+          e.preventDefault();
+          this.handleEndingClick(e);
+        }
+      });
+
       this.canvas.addEventListener('contextmenu', (e) => {
         e.preventDefault();
       });
@@ -615,6 +1447,9 @@
       } else if (kind === 'level7Clear') {
         this.overlayTitle.textContent = '击败深渊巨鲸，深海迷境重归平静！';
         this.overlayHint.innerHTML = '按 <b>R</b> 重新挑战第七层';
+      } else if (kind === 'level8Clear') {
+        this.overlayTitle.textContent = '击败神明，八层高塔的轮回终结！';
+        this.overlayHint.innerHTML = '按 <b>R</b> 重新挑战最终层';
       } else if (kind === 'boss') {
         this.overlayTitle.textContent = 'Boss 已击败';
         this.overlayHint.innerHTML = '按 <b>R</b> 返回普通房间重新开始';
@@ -800,11 +1635,13 @@
           : `LEVEL ${this.currentLevelId} CLEARED`);
       if (isDivine) {
         this.upgradeTitle.textContent = '神明神技';
-        this.upgradeDesc.textContent = this.currentLevelId >= 7
-          ? '选择一项神技，随后结束第七层。'
-          : (this.currentLevelId === 6
-            ? '选择一项神技，随后前往第七层。'
-            : '选择一项神技，随后前往第六层。');
+        this.upgradeDesc.textContent = this.currentLevelId >= 8
+          ? '选择一项神技，随后结束最终层。'
+          : (this.currentLevelId === 7
+            ? '选择一项神技，随后前往最终层。'
+            : (this.currentLevelId === 6
+              ? '选择一项神技，随后前往第七层。'
+              : '选择一项神技，随后前往第六层。'));
       } else if (isInitial) {
         this.upgradeTitle.textContent = '选择你的流派';
         this.upgradeDesc.textContent =
@@ -1023,11 +1860,13 @@
 
       if (this.pendingFinalClear) {
         this.pendingFinalClear = false;
-        const finalKind = this.currentLevelId >= 7
-          ? 'level7Clear'
-          : (this.currentLevelId === 6
-            ? 'level6Clear'
-            : (this.currentLevelId === 5 ? 'level5Clear' : 'level4Clear'));
+        const finalKind = this.currentLevelId >= 8
+          ? 'level8Clear'
+          : (this.currentLevelId === 7
+            ? 'level7Clear'
+            : (this.currentLevelId === 6
+              ? 'level6Clear'
+              : (this.currentLevelId === 5 ? 'level5Clear' : 'level4Clear')));
         this.state = finalKind;
         this.showOverlay(finalKind);
         this.setGameState('REWARD', '最终结算');
@@ -1106,14 +1945,33 @@
     // ------------------------------------------------------------
 
     update(dt) {
+      if (window.currentGameState === GAME_STATES.INTRO) {
+        this.updateIntro(dt);
+        return;
+      }
+      if (window.currentGameState === GAME_STATES.ENDING) {
+        this.updateEnding(dt);
+        return;
+      }
       if (window.currentGameState !== GAME_STATES.PLAYING) return;
 
       this.time += dt;
       this.updateEffects(dt);
+      this.updateDivineWhisper(dt);
+      this.updateDivineOrb(dt);
       this.updateToast(dt);
       this.portalHintCooldown = Math.max(0, this.portalHintCooldown - dt);
 
       if (this.state !== 'playing') return;
+
+      if (this.currentLevelId === 8 && this.scene === 'boss' &&
+        this.boss && !this.divineIntroPlayed) {
+        this.startDivineIntro();
+      }
+      if (this.cinematic) {
+        this.updateDivineIntro(dt);
+        return;
+      }
 
       this.enemyAggroLockTimer = Math.max(0, this.enemyAggroLockTimer - dt);
       this.portalCooldown = Math.max(0, this.portalCooldown - dt);
@@ -1469,6 +2327,7 @@
       if (this.state !== 'playing' || !this.divine || this.divine.meteorLevel <= 0) {
         return false;
       }
+      if (this.player.silenceTimer > 0) return false;
       if (this.meteorCooldown > 0) return false;
       const player = this.player;
       const bonus = this.playerUpgrades.orbDamageBonus || 0;
@@ -2460,6 +3319,14 @@
     // ------------------------------------------------------------
 
     render() {
+      if (window.currentGameState === GAME_STATES.INTRO) {
+        this.renderIntro();
+        return;
+      }
+      if (window.currentGameState === GAME_STATES.ENDING) {
+        this.renderEnding();
+        return;
+      }
       const ctx = this.ctx;
       const w = CFG.WORLD.W;
       const h = CFG.WORLD.H;
@@ -2509,6 +3376,8 @@
       this.drawExecutionerHooks(ctx);
       this.drawMeteors(ctx);
       this.drawCactusSpikes(ctx);
+      this.drawDivineOrb(ctx);
+      this.drawSilenceMark(ctx);
       this.drawParticles(ctx);
       this.drawGasExplosions(ctx);
       this.drawBlizzard(ctx);
@@ -2519,6 +3388,8 @@
       // 第六层黑暗视野：遮住外围，只保留玩家周围250px光圈。
       this.drawDarkness(ctx);
       this.drawInkOverlay(ctx);
+      this.drawDeityOverlays(ctx);
+      this.drawDivineWhisper(ctx);
 
       // 受伤红边
       if (this.player && this.player.hurtFlash > 0) {
@@ -4112,59 +4983,25 @@
       ctx.save();
       ctx.fillStyle = 'rgba(0,0,0,.46)';
       ctx.beginPath();
-      ctx.ellipse(x, y + 42, 32, 10, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, y + 38, 34, 10, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.translate(x, y + bob);
       if (enemy.executionerStun > 0) {
         ctx.globalAlpha = 0.82;
         ctx.rotate(Math.sin(enemy.walkTime * 30) * 0.08);
       }
-      const outline = '#0c0b0f';
-      const body = flash ? '#ffffff' : '#3a3942';
-      const dark = flash ? '#ffffff' : '#1c1b22';
-      const light = flash ? '#ffffff' : '#77747f';
-      const metal = flash ? '#ffffff' : '#8e8a94';
-
-      // 灰黑巨大矩形躯干。
-      ctx.fillStyle = outline;
-      ctx.fillRect(-36, -55, 72, 96);
-      ctx.fillStyle = dark;
-      ctx.fillRect(-31, -51, 62, 88);
-      ctx.fillStyle = body;
-      ctx.fillRect(-27, -47, 54, 80);
-      ctx.fillStyle = light;
-      ctx.fillRect(-22, -44, 16, 10);
-      ctx.fillRect(7, -30, 14, 7);
-      ctx.fillStyle = dark;
-      ctx.fillRect(-20, -20, 40, 8);
-      ctx.fillRect(-16, 7, 32, 6);
-      // 红眼。
-      ctx.fillStyle = '#120708';
-      ctx.fillRect(-18, -30, 13, 9);
-      ctx.fillRect(5, -30, 13, 9);
-      ctx.fillStyle = '#ff5a4f';
-      ctx.fillRect(-15, -28, 7, 5);
-      ctx.fillRect(8, -28, 7, 5);
-
-      // 巨斧。
-      ctx.fillStyle = outline;
-      ctx.fillRect(34, -68, 8, 118);
-      ctx.fillStyle = metal;
-      ctx.fillRect(36, -66, 4, 112);
-      ctx.fillStyle = dark;
-      ctx.fillRect(21, -78, 33, 20);
-      ctx.fillStyle = metal;
-      ctx.fillRect(24, -75, 27, 13);
-      ctx.fillStyle = light;
-      ctx.fillRect(28, -73, 17, 4);
-
-      // 腿甲。
-      ctx.fillStyle = outline;
-      ctx.fillRect(-28, 39, 20, 22);
-      ctx.fillRect(8, 39, 20, 22);
-      ctx.fillStyle = dark;
-      ctx.fillRect(-24, 41, 13, 16);
-      ctx.fillRect(12, 41, 13, 16);
+      const art = enemyArt.executioner;
+      const face = enemy.faceX === -1 ? -1 : 1;
+      ctx.scale(face, 1);
+      ctx.imageSmoothingEnabled = false;
+      if (art && art.ready) {
+        const sprite = flash && art.flash ? art.flash : art.source;
+        // 64×64原图放大为96×96；物理半径仍保持24（即48×48）。
+        ctx.drawImage(sprite, -48, -48, 96, 96);
+      } else {
+        ctx.fillStyle = flash ? '#ffffff' : '#3a3942';
+        ctx.fillRect(-24, -24, 48, 48);
+      }
       ctx.restore();
     }
 
@@ -4172,52 +5009,27 @@
       const x = Math.round(enemy.x);
       const y = Math.round(enemy.y);
       const flash = enemy.hitFlash > 0;
+      const bones = Boolean(enemy.bones);
+      const blink = bones
+        ? 0.22 + Math.abs(Math.sin(enemy.bonesFlash * 18)) * 0.34
+        : 1;
       ctx.save();
       ctx.fillStyle = 'rgba(0,0,0,.32)';
       ctx.beginPath();
-      ctx.ellipse(x, y + 12, enemy.bones ? 15 : 10, 4, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, y + (bones ? 8 : 12), bones ? 16 : 11, bones ? 3 : 4, 0, 0, Math.PI * 2);
       ctx.fill();
-
-      if (enemy.bones) {
-        const blink = 0.45 + Math.abs(Math.sin(enemy.bonesFlash * 9)) * 0.55;
-        ctx.globalAlpha = blink;
-        ctx.fillStyle = '#8e897c';
-        ctx.fillRect(x - 15, y + 3, 30, 7);
-        ctx.fillStyle = '#d8d3c2';
-        ctx.fillRect(x - 12, y, 9, 5);
-        ctx.fillRect(x + 1, y - 3, 8, 5);
-        ctx.fillRect(x - 4, y + 5, 11, 4);
-        ctx.fillStyle = '#b26cff';
-        ctx.fillRect(x - 1, y - 5, 3, 3);
-        ctx.globalAlpha = 1;
-        // 重组倒计时弧。
-        ctx.strokeStyle = 'rgba(178,108,255,.8)';
-        ctx.lineWidth = 2;
-        const t = 1 - enemy.bonesTimer / Math.max(0.001, enemy.reviveTime);
-        ctx.beginPath();
-        ctx.arc(x, y, 20, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t);
-        ctx.stroke();
-        ctx.restore();
-        return;
+      ctx.translate(x, y + (bones ? 8 : 0));
+      ctx.globalAlpha = blink;
+      ctx.scale(enemy.faceX === -1 ? -1 : 1, bones ? 0.45 : 1);
+      ctx.imageSmoothingEnabled = false;
+      const art = enemyArt.skeleton;
+      if (art && art.ready) {
+        const sprite = flash && !bones && art.flash ? art.flash : art.source;
+        ctx.drawImage(sprite, -24, -24, 48, 48);
+      } else {
+        ctx.fillStyle = flash && !bones ? '#ffffff' : '#d8d3c2';
+        ctx.fillRect(-12, -16, 24, 32);
       }
-
-      ctx.fillStyle = flash ? '#ffffff' : '#1d1820';
-      ctx.fillRect(x - 13, y - 15, 26, 27);
-      ctx.fillStyle = flash ? '#ffffff' : '#d8d3c2';
-      ctx.fillRect(x - 10, y - 16, 20, 18);
-      ctx.fillStyle = flash ? '#ffffff' : '#8e897c';
-      ctx.fillRect(x - 7, y - 4, 14, 11);
-      ctx.fillStyle = '#1d1820';
-      ctx.fillRect(x - 7, y - 11, 5, 5);
-      ctx.fillRect(x + 2, y - 11, 5, 5);
-      ctx.fillStyle = flash ? '#ffffff' : '#b26cff';
-      ctx.fillRect(x - 6, y - 10, 3, 3);
-      ctx.fillRect(x + 3, y - 10, 3, 3);
-      ctx.fillStyle = '#d8d3c2';
-      ctx.fillRect(x - 18, y - 6, 5, 13);
-      ctx.fillRect(x + 13, y - 6, 5, 13);
-      ctx.fillRect(x - 8, y + 11, 6, 5);
-      ctx.fillRect(x + 2, y + 11, 6, 5);
       ctx.restore();
     }
 
@@ -5855,7 +6667,18 @@
         let stateText;
         let stunned = false;
 
-        if (boss.type === 'abyssWhale') {
+        if (boss.type === 'deity') {
+          this.hud.bossNameText.textContent = 'BOSS · 神明';
+          this.hud.bossRoomText.textContent = 'FINAL BOSS';
+          this.hud.bossMetaLabelA.textContent = '阶段';
+          this.hud.bossTreeText.textContent = boss.getPhaseName();
+          this.hud.bossMetaLabelB.textContent = '技能';
+          this.hud.bossSpeedText.textContent = boss.getSkillLabel();
+          stateText = boss.getActionLabel();
+          stunned = false;
+          if (boss.state === 'dead') stateText = '已击败';
+          else if (boss.state === 'dying') stateText = '崩解中';
+        } else if (boss.type === 'abyssWhale') {
           this.hud.bossNameText.textContent = 'BOSS · 深渊巨鲸';
           this.hud.bossRoomText.textContent = 'ABYSS BOSS';
           this.hud.bossMetaLabelA.textContent = '阶段';

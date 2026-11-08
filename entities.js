@@ -101,6 +101,7 @@
       this.tongueSlowTimer = 0;
       this.tongueSlowMultiplier = 1;
       this.inkBlindTimer = 0;
+      this.silenceTimer = 0;
       this.rootTimer = 0;
       this.rollCooldown = 0;
       this.rollTimer = 0;
@@ -212,6 +213,7 @@
         this.rollCharges <= 0 ||
         this.rollTimer > 0 ||
         this.rootTimer > 0 ||
+        this.silenceTimer > 0 ||
         this.hp <= 0
       ) {
         return false;
@@ -315,6 +317,7 @@
       this.muzzleTimer = Math.max(0, this.muzzleTimer - dt);
       this.hurtFlash = Math.max(0, this.hurtFlash - dt);
       this.inkBlindTimer = Math.max(0, this.inkBlindTimer - dt);
+      this.silenceTimer = Math.max(0, this.silenceTimer - dt);
       if (this.burnTimer > 0 && this.game.state === 'playing') {
         this.burnTimer = Math.max(0, this.burnTimer - dt);
         this.burnTickTimer -= dt;
@@ -576,6 +579,19 @@
       if (this.hp <= 0) this.game.onPlayerDeath();
       return true;
     }
+
+    takeTrueDamage(amount) {
+      // 真实伤害：无视无敌帧、翻滚和护盾，也不受 godMode 保护。
+      this.hp = Math.max(0, this.hp - amount);
+      this.hurtFlash = 0.18;
+      this.game.addShake(6.5, 0.25);
+      this.game.spawnBurst(
+        this.x, this.y, 18,
+        ['#fff4c2', '#ffd76b', '#ffffff', '#c79a3d'], 140, 0.6
+      );
+      if (this.hp <= 0) this.game.onPlayerDeath();
+      return true;
+    }
   }
 
   class Tree {
@@ -819,6 +835,9 @@
       this.walkTime += dt;
       this.hookCooldown = Math.max(0, this.hookCooldown - dt);
       const player = this.game.player;
+      if (Math.abs(player.x - this.x) > 2) {
+        this.faceX = player.x >= this.x ? 1 : -1;
+      }
 
       if (this.executionerStun > 0) {
         this.executionerStun = Math.max(0, this.executionerStun - dt);

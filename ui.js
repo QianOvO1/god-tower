@@ -6,7 +6,7 @@
   'use strict';
 
   const PF = global.PF;
-  const STATES = ['MENU', 'PLAYING', 'LOADING', 'DEAD', 'REWARD'];
+  const STATES = ['MENU', 'INTRO', 'ENDING', 'PLAYING', 'LOADING', 'DEAD', 'REWARD'];
 
   const refs = {
     stage: document.getElementById('stage'),
@@ -14,6 +14,8 @@
     mainMenu: document.getElementById('main-menu'),
     loadingScreen: document.getElementById('loading-screen'),
     loadingText: document.getElementById('loadingText'),
+    loadingDiaryWrap: document.getElementById('loadingDiaryWrap'),
+    loadingDiary: document.getElementById('loadingDiary'),
     deathScreen: document.getElementById('overlay'),
     overlayTitle: document.getElementById('overlayTitle'),
     overlayHint: document.getElementById('overlayHint'),
@@ -69,6 +71,22 @@
     return `正在踏入第 ${levelId} 层...`;
   }
 
+  const LOADING_DIARIES = {
+    1: '听说塔顶能实现愿望，我变卖了所有家当才来到这里。前面好像有人……',
+    2: '森林的尽头全是毒瘴。我看到几个人倒在了泥里，他们好像在慢慢干瘪……',
+    3: '水已经喝光了。那些木乃伊到底是在攻击我，还是想逃出去？',
+    4: '好冷。但我不能冻死在这里，她在等我。如果神明真的存在，为什么不回应我的祈祷？',
+    5: '我感觉到一股巨大的能量在头顶汇聚。这里没有怪物，只有无穷无尽的火海……',
+    6: '我找到了一具穿长袍的白骨，死前在地上刻着一行字：不要相信光……',
+    7: '我听到了巨大的心跳声。那座塔顶，呼吸着的到底是什么东西？'
+  };
+
+  function setLoadingDiary(levelId) {
+    const text = LOADING_DIARIES[levelId] || '';
+    if (refs.loadingDiaryWrap) refs.loadingDiaryWrap.hidden = !text;
+    if (refs.loadingDiary) refs.loadingDiary.textContent = text;
+  }
+
   function configureReward() {
     const game = global.ForestGame;
     const hasChoice = Boolean(game && game.upgradeChoiceOpen);
@@ -77,10 +95,15 @@
     setHidden(refs.rewardRestart, hasChoice);
 
     if (!hasChoice) {
-      if (game && game.currentLevelId >= 7) {
+      if (game && game.currentLevelId >= 8) {
+        refs.upgradeKicker.textContent = '最终层 · 通关';
+        refs.upgradeTitle.textContent = '神明已陨落';
+        refs.upgradeDesc.textContent = '八层高塔的轮回终结，神明之巅重归寂静。';
+        if (refs.rewardRestart) refs.rewardRestart.textContent = '重新挑战最终层';
+      } else if (game && game.currentLevelId === 7) {
         refs.upgradeKicker.textContent = '第七层 · 通关';
         refs.upgradeTitle.textContent = '深渊巨鲸已击败';
-        refs.upgradeDesc.textContent = '深海迷境重归平静，潮汐不再翻涌。';
+        refs.upgradeDesc.textContent = '深海迷境重归平静，神明之巅在前方。';
         if (refs.rewardRestart) refs.rewardRestart.textContent = '重新挑战第七层';
       } else if (game && game.currentLevelId === 6) {
         refs.upgradeKicker.textContent = '第六层 · 通关';
@@ -135,6 +158,7 @@
           (game && game.pendingLayerId) ||
           ((game && game.currentLevelId ? game.currentLevelId + 1 : 2));
         if (refs.loadingText) refs.loadingText.textContent = loadingLayerText(levelId);
+        setLoadingDiary(levelId);
       }
     }
 
@@ -165,6 +189,7 @@
     loadingDone = typeof onDone === 'function' ? onDone : null;
 
     if (refs.loadingText) refs.loadingText.textContent = loadingLayerText(levelId);
+    setLoadingDiary(levelId);
     if (refs.loadingScreen) {
       refs.loadingScreen.hidden = false;
       refs.loadingScreen.classList.remove('is-fading');

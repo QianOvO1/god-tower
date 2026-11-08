@@ -50,7 +50,8 @@
     sandworm: 'assets/boss_worm.png',
     snowmanChief: 'assets/boss_snowman.png',
     evilMage: 'assets/boss_mage.png',
-    abyssWhale: 'assets/boss_whale.png'
+    abyssWhale: 'assets/boss_whale.png',
+    deity: 'assets/boss_god.png'
   };
   const bossArt = {};
 
@@ -2380,6 +2381,799 @@
     }
   }
 
+  class DeityBoss extends Boss {
+    constructor(game) {
+      super(game);
+      this.type = 'deity';
+      this.label = '神明';
+      this.maxHp = 500;
+      this.hp = 500;
+      this.x = CFG.WORLD.W / 2;
+      this.y = 300;
+      this.contactHalf = 80;
+      this.contactDamage = 6;
+      this.contactCooldown = 0;
+      this.contactRecoilTimer = 0;
+      this.hitFlash = 0;
+      this.deathTimer = 0;
+      this.deathPuffTimer = 0;
+      this.walkTime = 0;
+      this.moving = false;
+      this.introVisible = true;
+      this.skillState = 'idle';
+      this.skillTimer = 0;
+      this.skillCooldown = 3.5;
+      this.lastSkill = null;
+      this.holyOrbs = [];
+      this.chainTarget = { x: 0, y: 0 };
+      this.wrathTarget = { x: 0, y: 0 };
+      this.wrathStruck = false;
+      this.phantomWaves = [];
+      this.thrustFromX = this.x;
+      this.thrustFromY = this.y;
+      this.wailType = 'frog';
+      this.wailPhantom = { x: 0, y: 0 };
+      this.wailCircles = [];
+      this.stripOrigin = { x: 0, y: 0 };
+      this.stripMaxDist = 0;
+      this.voidCenter = { x: CFG.WORLD.W / 2, y: CFG.WORLD.H / 2 };
+      this.voidMeteors = [];
+      this.phaseTransitionTriggered = false;
+      this.invulnerableTimer = 0;
+      this.rageMode = false;
+      this.timeStopActive = false;
+      this.timeStopSub = 'barrage';
+      this.timeStopCast = false;
+      this.timeStopChainTimer = 0;
+      this.timeStopChainHit = false;
+      this.swordCircles = [];
+      this.ultimateTriggered = false;
+      this.ultimateTimer = 0;
+      this.ultimateFailed = false;
+    }
+
+    getPhaseName() {
+      if (this.hp > this.maxHp * 0.7) return '圣辉';
+      if (this.hp > this.maxHp * 0.3) return '神怒';
+      return '终焉';
+    }
+
+    getSkillCooldown() {
+      if (this.hp > this.maxHp * 0.7) return 3.5;
+      if (this.hp > this.maxHp * 0.3) return 3.0;
+      return 2.5;
+    }
+
+    takeDamage(amount, sourceX, sourceY, sourceKind = 'orb') {
+      if (this.invulnerableTimer > 0) return;
+      super.takeDamage(amount, sourceX, sourceY, sourceKind);
+    }
+
+    getActionLabel() {
+      if (this.state === 'dying') return '崩解';
+      if (this.skillState === 'barrageWindup') return '圣光弹幕 · 蓄力';
+      if (this.skillState === 'barrageRecover') return '圣光弹幕';
+      if (this.skillState === 'chainWarn') return '光之锁链 · 预警';
+      if (this.skillState === 'chainStrike') return '光之锁链';
+      if (this.skillState === 'wrathWarn') return '神明之怒 · 升空';
+      if (this.skillState === 'wrathStrike') return '神明之怒';
+      if (this.skillState === 'thrustOut') return '幻影突刺 · 光化';
+      if (this.skillState === 'thrustStrike') return '幻影突刺';
+      if (this.skillState === 'wailSummon') return '亡者哀嚎 · 召唤';
+      if (this.skillState === 'wailWarn') return '亡者哀嚎 · 预警';
+      if (this.skillState === 'wailStrike') return '亡者哀嚎';
+      if (this.skillState === 'stripWarn') return '禁忌剥离';
+      if (this.skillState === 'stripHit') return '禁忌剥离 · 沉默';
+      if (this.skillState === 'voidCast') return '万象天引 · 展开';
+      if (this.skillState === 'voidActive') return '万象天引';
+      if (this.skillState === 'transition') return '神格崩塌 · 冲击';
+      if (this.skillState === 'timeStop') return '时间停滞';
+      if (this.skillState === 'swordWarn') return '神罚之剑 · 降临';
+      if (this.skillState === 'swordStrike') return '神罚之剑';
+      if (this.skillState === 'ultimate') return '终极毁灭 · 读条';
+      return this.moving ? '神临' : '俯视';
+    }
+
+    getSkillLabel() {
+      if (this.hp > this.maxHp * 0.7) {
+        return '圣光弹幕 / 光之锁链 / 神明之怒';
+      }
+      if (this.hp > this.maxHp * 0.3) {
+        return '幻影突刺 / 亡者哀嚎 / 禁忌剥离 / 万象天引';
+      }
+      return '时间停滞 / 神罚之剑 / 终极毁灭';
+    }
+
+    startDeath() {
+      if (this.state !== 'active') return;
+      this.state = 'dying';
+      this.deathTimer = 0;
+      this.deathPuffTimer = 0;
+      this.moving = false;
+      this.game.addShake(13, 1);
+      this.game.spawnBurst(
+        this.x, this.y, 54,
+        ['#fff4c2', '#e7bf58', '#b48830', '#ffffff'], 220, 1
+      );
+      // 最终Boss死亡立即进入结局，不再走普通奖励结算。
+      this.game.startEnding();
+    }
+
+    startPhase1Skill() {
+      if (this.hp <= this.maxHp * 0.7) return false;
+      const pick = Math.floor(Math.random() * 3);
+      const player = this.game.player;
+      this.moving = false;
+      this.skillTimer = 0;
+      if (pick === 0) {
+        this.lastSkill = 'barrage';
+        this.skillState = 'barrageWindup';
+        this.skillTimer = 0.5;
+        this.game.addShake(1.4, 0.1);
+      } else if (pick === 1) {
+        this.lastSkill = 'chain';
+        this.skillState = 'chainWarn';
+        this.skillTimer = 0.8;
+        this.chainTarget.x = player.x;
+        this.chainTarget.y = player.y;
+        this.game.addShake(1.6, 0.12);
+      } else {
+        this.lastSkill = 'wrath';
+        this.skillState = 'wrathWarn';
+        this.skillTimer = 1.0;
+        this.wrathTarget.x = player.x;
+        this.wrathTarget.y = player.y;
+        this.wrathStruck = false;
+        this.game.addShake(2.2, 0.16);
+      }
+      return true;
+    }
+
+    spawnHolyBarrage() {
+      const player = this.game.player;
+      const base = Math.atan2(player.y - this.y, player.x - this.x);
+      for (let i = 0; i < 5; i += 1) {
+        const angle = base + (i - 2) * 0.16;
+        this.holyOrbs.push({
+          x: this.x + Math.cos(angle) * 90,
+          y: this.y + Math.sin(angle) * 90,
+          vx: Math.cos(angle) * 220,
+          vy: Math.sin(angle) * 220,
+          radius: 9,
+          life: 4.5,
+          damage: 3
+        });
+      }
+    }
+
+    updateHolyOrbs(dt) {
+      for (let i = this.holyOrbs.length - 1; i >= 0; i -= 1) {
+        const orb = this.holyOrbs[i];
+        orb.life -= dt;
+        orb.x += orb.vx * dt;
+        orb.y += orb.vy * dt;
+        if (orb.life <= 0 ||
+          isCircleBlocked(this.game, orb.x, orb.y, orb.radius)) {
+          this.holyOrbs.splice(i, 1);
+          continue;
+        }
+        if (distance(orb.x, orb.y, this.game.player.x, this.game.player.y) <=
+          orb.radius + this.game.player.halfW) {
+          this.game.player.takeDamage(orb.damage, orb.x, orb.y);
+          this.holyOrbs.splice(i, 1);
+        }
+      }
+    }
+
+    applyChainDamage() {
+      const dx = Math.abs(this.game.player.x - this.chainTarget.x);
+      const dy = Math.abs(this.game.player.y - this.chainTarget.y);
+      const long = 280;
+      const thick = 48;
+      if ((dx <= long / 2 && dy <= thick / 2) ||
+        (dx <= thick / 2 && dy <= long / 2)) {
+        this.game.player.takeDamage(5, this.x, this.y);
+      }
+    }
+
+    applyWrathDamage() {
+      if (distance(
+        this.game.player.x, this.game.player.y,
+        this.wrathTarget.x, this.wrathTarget.y
+      ) <= 108) {
+        this.game.player.takeDamage(6, this.x, this.y);
+      }
+    }
+
+    startPhase2Skill() {
+      if (this.hp > this.maxHp * 0.7 || this.hp <= this.maxHp * 0.3) {
+        return false;
+      }
+      const pick = Math.floor(Math.random() * 4);
+      this.moving = false;
+      this.skillTimer = 0;
+      if (pick === 0) {
+        this.lastSkill = 'thrust';
+        this.skillState = 'thrustOut';
+        this.skillTimer = 0.5;
+      } else if (pick === 1) {
+        this.lastSkill = 'wail';
+        this.skillState = 'wailSummon';
+        this.skillTimer = 0.5;
+        this.wailType = Math.random() < 0.5 ? 'frog' : 'worm';
+        this.wailCircles = [];
+        const edge = Math.floor(Math.random() * 4);
+        this.wailPhantom.x = edge === 2 ? 80 : (edge === 3 ? CFG.WORLD.W - 80 : randomRange(Math.random, 180, CFG.WORLD.W - 180));
+        this.wailPhantom.y = edge === 0 ? 90 : (edge === 1 ? CFG.WORLD.H - 90 : randomRange(Math.random, 160, CFG.WORLD.H - 160));
+      } else if (pick === 2) {
+        this.lastSkill = 'strip';
+        this.skillState = 'stripWarn';
+        this.skillTimer = 2.0;
+        this.stripOrigin.x = this.game.player.x;
+        this.stripOrigin.y = this.game.player.y;
+        this.stripMaxDist = 0;
+      } else {
+        this.lastSkill = 'void';
+        this.skillState = 'voidCast';
+        this.skillTimer = 0.4;
+        this.voidCenter.x = CFG.WORLD.W / 2;
+        this.voidCenter.y = CFG.WORLD.H / 2;
+        this.voidMeteors = [];
+      }
+      this.game.addShake(2.5, 0.18);
+      return true;
+    }
+
+    beginPhaseTransition() {
+      this.phaseTransitionTriggered = true;
+      this.rageMode = true;
+      this.skillState = 'transition';
+      this.skillTimer = 1.0;
+      this.invulnerableTimer = 1.0;
+      this.moving = false;
+      this.x = CFG.WORLD.W / 2;
+      this.y = 300;
+      const player = this.game.player;
+      const dx = player.x - this.x;
+      const dy = player.y - this.y;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      player.knockX += (dx / len) * 560;
+      player.knockY += (dy / len) * 560;
+      this.game.addShake(9, 0.6);
+      this.game.spawnBurst(
+        this.x, this.y, 42,
+        ['#fff4c2', '#ffd76b', '#ffffff', '#d8b04e'], 230, 0.9
+      );
+      this.game.showToast('神格崩塌 · 终焉降临', 2.0);
+    }
+
+    startPhase3Skill() {
+      if (this.hp > this.maxHp * 0.3 || this.hp <= 0) return false;
+      const pick = Math.random() < 0.5 ? 0 : 1;
+      this.moving = false;
+      this.skillTimer = 0;
+      if (pick === 0) {
+        this.skillState = 'timeStop';
+        this.skillTimer = 3.0;
+        this.timeStopActive = true;
+        this.timeStopSub = Math.random() < 0.5 ? 'barrage' : 'chain';
+        this.timeStopCast = false;
+        this.timeStopChainTimer = 0;
+        this.timeStopChainHit = false;
+        this.game.player.applyTongueSlow(3.0, 0.5);
+        this.game.addShake(3.5, 0.35);
+        this.game.showToast('时间停滞', 1.4);
+      } else {
+        this.skillState = 'swordWarn';
+        this.skillTimer = 1.2;
+        const safe = Math.floor(Math.random() * 4);
+        this.safeCorner = {
+          x: safe === 1 || safe === 3 ? CFG.WORLD.W - 82 : 82,
+          y: safe >= 2 ? CFG.WORLD.H - 82 : 82
+        };
+        this.swordCircles = [];
+        for (let row = 0; row < 4; row += 1) {
+          for (let col = 0; col < 6; col += 1) {
+            const x = 150 + col * 196 + randomRange(Math.random, -18, 18);
+            const y = 140 + row * 145 + randomRange(Math.random, -14, 14);
+            if (distance(x, y, this.safeCorner.x, this.safeCorner.y) < 155) {
+              continue;
+            }
+            this.swordCircles.push({ x, y, radius: 78 });
+          }
+        }
+        this.game.addShake(5, 0.4);
+        this.game.showToast('神罚之剑 · 寻找安全区', 1.6);
+      }
+      return true;
+    }
+
+    applySwordDamage() {
+      for (const circle of this.swordCircles) {
+        if (distance(
+          this.game.player.x, this.game.player.y,
+          circle.x, circle.y
+        ) <= circle.radius) {
+          this.game.player.takeDamage(8, circle.x, circle.y);
+          break;
+        }
+      }
+    }
+
+    startUltimate() {
+      this.ultimateTriggered = true;
+      this.skillState = 'ultimate';
+      this.ultimateTimer = 5.0;
+      this.timeStopActive = false;
+      this.rageMode = true;
+      this.x = CFG.WORLD.W / 2;
+      this.y = CFG.WORLD.H / 2;
+      this.moving = false;
+      this.holyOrbs = [];
+      this.phantomWaves = [];
+      this.wailCircles = [];
+      this.voidMeteors = [];
+      this.game.addShake(14, 1.0);
+      this.game.spawnBurst(
+        this.x, this.y, 60,
+        ['#ffffff', '#fff4c2', '#ffd76b', '#d8b04e'], 260, 1.0
+      );
+      this.game.showToast('终极毁灭 · 5秒内击碎神明！', 3.0);
+    }
+
+    spawnPhantomWaves() {
+      const player = this.game.player;
+      const base = Math.atan2(player.y - this.y, player.x - this.x);
+      for (let i = 0; i < 3; i += 1) {
+        const angle = base + (i - 1) * 0.12;
+        this.phantomWaves.push({
+          x: this.x,
+          y: this.y,
+          dirX: Math.cos(angle),
+          dirY: Math.sin(angle),
+          angle,
+          speed: 900,
+          width: 88,
+          height: 18,
+          damage: 4,
+          life: 1.6
+        });
+      }
+    }
+
+    updatePhantomWaves(dt) {
+      for (let i = this.phantomWaves.length - 1; i >= 0; i -= 1) {
+        const wave = this.phantomWaves[i];
+        wave.life -= dt;
+        wave.x += wave.dirX * wave.speed * dt;
+        wave.y += wave.dirY * wave.speed * dt;
+        if (wave.life <= 0 ||
+          isCircleBlocked(this.game, wave.x, wave.y, 8)) {
+          this.phantomWaves.splice(i, 1);
+          continue;
+        }
+        const dx = this.game.player.x - wave.x;
+        const dy = this.game.player.y - wave.y;
+        const along = dx * wave.dirX + dy * wave.dirY;
+        const lateral = Math.abs(dx * -wave.dirY + dy * wave.dirX);
+        if (
+          Math.abs(along) <= wave.width / 2 &&
+          lateral <= wave.height / 2 + this.game.player.halfW
+        ) {
+          this.game.player.takeDamage(wave.damage, wave.x, wave.y);
+          this.phantomWaves.splice(i, 1);
+        }
+      }
+    }
+
+    beginWailWarnings() {
+      if (this.wailType === 'worm') {
+        this.wailCircles = [];
+        for (let i = 0; i < 5; i += 1) {
+          this.wailCircles.push({
+            x: randomRange(Math.random, 160, CFG.WORLD.W - 160),
+            y: randomRange(Math.random, 150, CFG.WORLD.H - 150),
+            radius: randomRange(Math.random, 70, 95)
+          });
+        }
+      }
+      this.skillState = 'wailWarn';
+      this.skillTimer = 0.8;
+    }
+
+    applyWailDamage() {
+      if (this.wailType === 'frog') {
+        const dx = Math.abs(this.game.player.x - CFG.WORLD.W / 2);
+        const dy = Math.abs(this.game.player.y - CFG.WORLD.H / 2);
+        if (dx <= 82 || dy <= 82) {
+          this.game.player.takeDamage(4, CFG.WORLD.W / 2, CFG.WORLD.H / 2);
+        }
+      } else {
+        for (const circle of this.wailCircles) {
+          if (distance(
+            this.game.player.x, this.game.player.y,
+            circle.x, circle.y
+          ) <= circle.radius) {
+            this.game.player.takeDamage(4, circle.x, circle.y);
+            break;
+          }
+        }
+      }
+    }
+
+    updateVoidMeteors(dt) {
+      for (const meteor of this.voidMeteors) {
+        if (meteor.impact > 0) {
+          meteor.impact = Math.max(0, meteor.impact - dt);
+          continue;
+        }
+        meteor.timer -= dt;
+        if (meteor.timer <= 0 && !meteor.struck) {
+          meteor.struck = true;
+          meteor.impact = 0.35;
+          if (distance(
+            this.game.player.x, this.game.player.y,
+            meteor.x, meteor.y
+          ) <= meteor.radius) {
+            this.game.player.takeDamage(5, meteor.x, meteor.y);
+          }
+          this.game.addShake(3.2, 0.18);
+        }
+      }
+    }
+
+    update(dt) {
+      if (this.state === 'dead') return;
+      this.hitFlash = Math.max(0, this.hitFlash - dt);
+      this.contactCooldown = Math.max(0, this.contactCooldown - dt);
+      this.contactRecoilTimer = Math.max(0, this.contactRecoilTimer - dt);
+      this.walkTime += dt;
+      this.invulnerableTimer = Math.max(0, this.invulnerableTimer - dt);
+      this.updateHolyOrbs(dt);
+      this.updatePhantomWaves(dt);
+
+      if (this.state === 'dying') {
+        this.deathTimer += dt;
+        this.deathPuffTimer -= dt;
+        if (this.deathPuffTimer <= 0) {
+          this.deathPuffTimer = 0.14;
+          this.game.spawnBurst(
+            this.x + randomRange(Math.random, -90, 90),
+            this.y + randomRange(Math.random, -90, 90),
+            7, ['#fff4c2', '#e7bf58', '#ffffff'], 100, 0.6
+          );
+        }
+        if (this.deathTimer >= 2.0) {
+          this.state = 'dead';
+          this.game.onBossDefeated();
+        }
+        return;
+      }
+
+      if (this.game.state !== 'playing') return;
+      if (this.game.cinematic) {
+        this.moving = false;
+        return;
+      }
+
+      if (this.state === 'active' && this.hp <= this.maxHp * 0.1 &&
+        !this.ultimateTriggered) {
+        this.startUltimate();
+        return;
+      }
+
+      if (this.state === 'active' && this.hp <= this.maxHp * 0.3 &&
+        !this.phaseTransitionTriggered) {
+        this.beginPhaseTransition();
+        return;
+      }
+
+      if (this.skillState === 'transition') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.skillState = 'idle';
+          this.skillCooldown = 2.5;
+        }
+        return;
+      }
+
+      if (this.skillState === 'ultimate') {
+        this.ultimateTimer = Math.max(0, this.ultimateTimer - dt);
+        this.moving = false;
+        if (this.ultimateTimer === 0 && this.hp > 0) {
+          this.ultimateFailed = true;
+          this.game.player.hp = 0;
+          this.game.onPlayerDeath();
+        }
+        return;
+      }
+
+      if (this.skillState === 'timeStop') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        this.timeStopActive = true;
+        if (!this.timeStopCast && 3 - this.skillTimer >= 0.6) {
+          this.timeStopCast = true;
+          if (this.timeStopSub === 'barrage') {
+            this.spawnHolyBarrage();
+          } else {
+            this.chainTarget.x = this.game.player.x;
+            this.chainTarget.y = this.game.player.y;
+            this.timeStopChainTimer = 0.8;
+            this.timeStopChainHit = false;
+          }
+        }
+        if (this.timeStopChainTimer > 0) {
+          this.timeStopChainTimer = Math.max(0, this.timeStopChainTimer - dt);
+          if (this.timeStopChainTimer === 0 && !this.timeStopChainHit) {
+            this.timeStopChainHit = true;
+            this.applyChainDamage();
+            this.game.addShake(4, 0.25);
+          }
+        }
+        if (this.skillTimer === 0) {
+          this.timeStopActive = false;
+          this.skillState = 'idle';
+          this.skillCooldown = 2.5;
+        }
+        return;
+      }
+
+      if (this.skillState === 'swordWarn') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.applySwordDamage();
+          this.skillState = 'swordStrike';
+          this.skillTimer = 0.45;
+          this.game.addShake(10, 0.6);
+        }
+        return;
+      }
+
+      if (this.skillState === 'swordStrike') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.skillState = 'idle';
+          this.skillCooldown = 2.5;
+        }
+        return;
+      }
+
+      if (this.skillState === 'barrageWindup') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.spawnHolyBarrage();
+          this.skillState = 'idle';
+          this.skillCooldown = 3.5;
+        }
+        return;
+      }
+
+      if (this.skillState === 'chainWarn') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.applyChainDamage();
+          this.skillState = 'chainStrike';
+          this.skillTimer = 0.25;
+          this.game.addShake(5.5, 0.3);
+        }
+        return;
+      }
+
+      if (this.skillState === 'chainStrike') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.skillState = 'idle';
+          this.skillCooldown = 3.5;
+        }
+        return;
+      }
+
+      if (this.skillState === 'wrathWarn') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        // 持续追踪玩家，直到雷霆落下的前一刻锁定最后位置。
+        this.wrathTarget.x = this.game.player.x;
+        this.wrathTarget.y = this.game.player.y;
+        if (this.skillTimer === 0) {
+          this.applyWrathDamage();
+          this.skillState = 'wrathStrike';
+          this.skillTimer = 0.3;
+          this.game.addShake(8, 0.4);
+        }
+        return;
+      }
+
+      if (this.skillState === 'wrathStrike') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.skillState = 'idle';
+          this.skillCooldown = 3.5;
+        }
+        return;
+      }
+
+      if (this.skillState === 'thrustOut') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          const angle = Math.random() * Math.PI * 2;
+          this.x = clamp(
+            this.game.player.x + Math.cos(angle) * 100,
+            120, CFG.WORLD.W - 120
+          );
+          this.y = clamp(
+            this.game.player.y + Math.sin(angle) * 100,
+            120, CFG.WORLD.H - 120
+          );
+          this.spawnPhantomWaves();
+          this.skillState = 'thrustStrike';
+          this.skillTimer = 0.35;
+          this.game.addShake(4.5, 0.22);
+          this.game.spawnBurst(
+            this.x, this.y, 20,
+            ['#ffffff', '#fff4c2', '#d8b04e'], 160, 0.5
+          );
+        }
+        return;
+      }
+
+      if (this.skillState === 'thrustStrike') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.x = CFG.WORLD.W / 2;
+          this.y = 300;
+          this.skillState = 'idle';
+          this.skillCooldown = this.getSkillCooldown();
+        }
+        return;
+      }
+
+      if (this.skillState === 'wailSummon') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) this.beginWailWarnings();
+        return;
+      }
+
+      if (this.skillState === 'wailWarn') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.applyWailDamage();
+          this.skillState = 'wailStrike';
+          this.skillTimer = 0.5;
+          this.game.addShake(6, 0.35);
+        }
+        return;
+      }
+
+      if (this.skillState === 'wailStrike') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.skillState = 'idle';
+          this.skillCooldown = this.getSkillCooldown();
+        }
+        return;
+      }
+
+      if (this.skillState === 'stripWarn') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        this.stripMaxDist = Math.max(
+          this.stripMaxDist,
+          distance(
+            this.game.player.x, this.game.player.y,
+            this.stripOrigin.x, this.stripOrigin.y
+          )
+        );
+        if (this.skillTimer === 0) {
+          if (this.stripMaxDist <= 50) {
+            this.game.player.silenceTimer = 5;
+            this.game.showToast('禁忌剥离 · 沉默5秒', 1.8);
+          }
+          this.skillState = 'stripHit';
+          this.skillTimer = 0.4;
+          this.game.addShake(3.5, 0.2);
+        }
+        return;
+      }
+
+      if (this.skillState === 'stripHit') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.skillState = 'idle';
+          this.skillCooldown = this.getSkillCooldown();
+        }
+        return;
+      }
+
+      if (this.skillState === 'voidCast') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        if (this.skillTimer === 0) {
+          this.skillState = 'voidActive';
+          this.skillTimer = 2.5;
+          this.voidMeteors = [];
+          for (let i = 0; i < 4; i += 1) {
+            this.voidMeteors.push({
+              x: randomRange(Math.random, 220, CFG.WORLD.W - 220),
+              y: randomRange(Math.random, 180, CFG.WORLD.H - 180),
+              radius: 82,
+              timer: 1.1,
+              impact: 0,
+              struck: false
+            });
+          }
+          this.game.addShake(4, 0.4);
+        }
+        return;
+      }
+
+      if (this.skillState === 'voidActive') {
+        this.skillTimer = Math.max(0, this.skillTimer - dt);
+        this.moving = false;
+        this.updateVoidMeteors(dt);
+        if (!this.game.player.rolling) {
+          const dx = this.voidCenter.x - this.game.player.x;
+          const dy = this.voidCenter.y - this.game.player.y;
+          const dist = Math.max(1, Math.hypot(dx, dy));
+          this.game.player.x += (dx / dist) * 72 * dt;
+          this.game.player.y += (dy / dist) * 72 * dt;
+          this.game.player.applyTongueSlow(0.25, 0.65);
+        }
+        if (this.skillTimer === 0) {
+          this.skillState = 'idle';
+          this.skillCooldown = this.getSkillCooldown();
+        }
+        return;
+      }
+
+      this.skillCooldown = Math.max(0, this.skillCooldown - dt);
+      if (this.hp <= this.maxHp * 0.7 && this.skillCooldown > 3) {
+        this.skillCooldown = 3;
+      }
+      if (this.hp <= this.maxHp * 0.3 && this.skillCooldown > 2.5) {
+        this.skillCooldown = 2.5;
+      }
+      if (this.skillCooldown === 0) {
+        if (this.hp > this.maxHp * 0.7) {
+          if (this.startPhase1Skill()) return;
+        } else if (this.hp > this.maxHp * 0.3) {
+          if (this.startPhase2Skill()) return;
+        } else if (this.hp > this.maxHp * 0.1) {
+          if (this.startPhase3Skill()) return;
+        }
+      }
+
+      const player = this.game.player;
+      const dx = player.x - this.x;
+      const dy = player.y - this.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 150) {
+        const moveSpeed = 25 * (this.rageMode ? 1.3 : 1);
+        moveBody(
+          this.game, this,
+          (dx / dist) * moveSpeed * dt,
+          (dy / dist) * moveSpeed * dt,
+          this.contactHalf, this.contactHalf
+        );
+        this.moving = true;
+      } else {
+        this.moving = false;
+      }
+    }
+  }
   class LavaDragonBoss extends Boss {
     constructor(game) {
       super(game);
@@ -2863,8 +3657,8 @@
     onBossDefeated() {
       if (this.state !== 'playing') return;
 
-      // 第七层为当前最终层；第六层结算后继续前往第七层。
-      this.pendingFinalClear = this.currentLevelId >= 7;
+      // 第八层为总层数最终层；第七层结算后继续前往神明之巅。
+      this.pendingFinalClear = this.currentLevelId >= 8;
 
       // 停止战斗并清空预警树/怪物，保留 Boss 房初始掩体树。
       this.state = 'levelClear';
@@ -2941,7 +3735,8 @@
 
     handleBossContact() {
       if (!this.boss || this.boss.state !== 'active' || this.boss.burrowed) return;
-      if (this.boss.skillState === 'slamDive') return;
+      if (this.boss.skillState === 'slamDive' ||
+        this.boss.skillState === 'thrustOut') return;
       if (
         this.boss.type === 'snowmanChief' &&
         (this.boss.action === 'slamWarn' ||
@@ -3576,6 +4371,362 @@
         ctx.strokeRect(-half - 8, -half - 8, size + 16, size + 16);
       }
       ctx.restore();    }
+
+    drawDeity(ctx, boss) {
+      const x = Math.round(boss.x);
+      const y = Math.round(boss.y);
+      const flash = boss.hitFlash > 0;
+      const dying = boss.state === 'dying';
+      const progress = dying ? clamp(boss.deathTimer / 2, 0, 1) : 0;
+      const pulse = 0.55 + Math.sin(boss.walkTime * 2.2) * 0.12;
+
+      if (boss.skillState === 'transition') {
+        ctx.save();
+        const t = 1 - boss.skillTimer / 1.0;
+        ctx.globalAlpha = 1 - t;
+        ctx.strokeStyle = '#ffe08a';
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.arc(x, y, 120 + t * 460, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 0.35 * (1 - t);
+        ctx.fillStyle = '#ffd76b';
+        ctx.beginPath();
+        ctx.arc(x, y, 120 + t * 360, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      if (boss.timeStopActive && boss.timeStopChainTimer > 0) {
+        ctx.save();
+        ctx.fillStyle = `rgba(225, 35, 45, ${0.20 + Math.abs(Math.sin(boss.walkTime * 9)) * 0.12})`;
+        ctx.strokeStyle = 'rgba(255, 80, 70, .95)';
+        ctx.lineWidth = 4;
+        ctx.fillRect(boss.chainTarget.x - 140, boss.chainTarget.y - 24, 280, 48);
+        ctx.fillRect(boss.chainTarget.x - 24, boss.chainTarget.y - 140, 48, 280);
+        ctx.strokeRect(boss.chainTarget.x - 140, boss.chainTarget.y - 24, 280, 48);
+        ctx.strokeRect(boss.chainTarget.x - 24, boss.chainTarget.y - 140, 48, 280);
+        ctx.restore();
+      }
+
+      if (boss.skillState === 'swordWarn' || boss.skillState === 'swordStrike') {
+        ctx.save();
+        if (boss.safeCorner) {
+          ctx.fillStyle = 'rgba(225, 255, 238, .26)';
+          ctx.strokeStyle = 'rgba(235, 255, 245, .9)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(boss.safeCorner.x, boss.safeCorner.y, 58, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+        for (const circle of boss.swordCircles) {
+          if (boss.skillState === 'swordWarn') {
+            ctx.fillStyle = `rgba(225, 35, 45, ${0.18 + Math.abs(Math.sin(boss.walkTime * 8)) * 0.10})`;
+            ctx.strokeStyle = 'rgba(255, 80, 70, .88)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(circle.x, circle.y, circle.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          } else {
+            ctx.fillStyle = 'rgba(255, 246, 190, .34)';
+            ctx.fillRect(circle.x - 18, 0, 36, circle.y);
+            ctx.fillStyle = 'rgba(255, 255, 255, .8)';
+            ctx.fillRect(circle.x - 5, 0, 10, circle.y);
+            ctx.fillStyle = 'rgba(255, 239, 160, .55)';
+            ctx.beginPath();
+            ctx.arc(circle.x, circle.y, circle.radius, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+      }
+
+      if (boss.ultimateTriggered && boss.skillState === 'ultimate') {
+        ctx.save();
+        ctx.globalAlpha = 0.22 + Math.abs(Math.sin(boss.walkTime * 8)) * 0.12;
+        ctx.strokeStyle = '#ffe08a';
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.arc(x, y, 142, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      if (boss.skillState === 'thrustOut') {
+        ctx.save();
+        ctx.globalAlpha = 0.55 + Math.abs(Math.sin(boss.walkTime * 18)) * 0.3;
+        ctx.fillStyle = '#fffbea';
+        ctx.beginPath();
+        ctx.arc(x, y, 105, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 0.8;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(x, y, 68, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
+
+      if (boss.skillState === 'wailSummon' ||
+        boss.skillState === 'wailWarn' ||
+        boss.skillState === 'wailStrike') {
+        ctx.save();
+        ctx.globalAlpha = boss.skillState === 'wailStrike' ? 0.55 : 0.72;
+        const phantomColor = boss.wailType === 'frog' ? '#79d6a1' : '#d8b078';
+        ctx.fillStyle = phantomColor;
+        ctx.beginPath();
+        ctx.ellipse(boss.wailPhantom.x, boss.wailPhantom.y, 58, 68, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(20, 16, 8, .55)';
+        ctx.beginPath();
+        ctx.arc(boss.wailPhantom.x - 18, boss.wailPhantom.y - 18, 6, 0, Math.PI * 2);
+        ctx.arc(boss.wailPhantom.x + 18, boss.wailPhantom.y - 18, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        if (boss.wailType === 'frog') {
+          ctx.save();
+          ctx.fillStyle = boss.skillState === 'wailStrike'
+            ? 'rgba(255, 248, 190, .48)'
+            : `rgba(225, 35, 45, ${0.18 + Math.abs(Math.sin(boss.walkTime * 8)) * 0.12})`;
+          ctx.fillRect(CFG.WORLD.W / 2 - 82, 0, 164, CFG.WORLD.H);
+          ctx.fillRect(0, CFG.WORLD.H / 2 - 82, CFG.WORLD.W, 164);
+          ctx.restore();
+        } else {
+          for (const circle of boss.wailCircles) {
+            ctx.save();
+            ctx.fillStyle = boss.skillState === 'wailStrike'
+              ? 'rgba(255, 248, 190, .45)'
+              : 'rgba(225, 35, 45, .22)';
+            ctx.strokeStyle = 'rgba(255, 75, 65, .9)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(circle.x, circle.y, circle.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+      }
+
+      if (boss.skillState === 'stripWarn' || boss.skillState === 'stripHit') {
+        const px = boss.game.player.x;
+        const py = boss.game.player.y;
+        ctx.save();
+        ctx.fillStyle = 'rgba(225, 35, 45, .9)';
+        ctx.beginPath();
+        ctx.moveTo(px, py - 74);
+        ctx.lineTo(px + 9, py - 56);
+        ctx.lineTo(px, py - 40);
+        ctx.lineTo(px - 9, py - 56);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(225, 35, 45, .8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(px, py - 38);
+        ctx.lineTo(px, py - 12);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      if (boss.skillState === 'voidCast' || boss.skillState === 'voidActive') {
+        ctx.save();
+        const cx = boss.voidCenter.x;
+        const cy = boss.voidCenter.y;
+        const t = boss.walkTime;
+        ctx.fillStyle = 'rgba(12, 5, 22, .52)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 150, 0, Math.PI * 2);
+        ctx.fill();
+        for (let i = 0; i < 4; i += 1) {
+          ctx.strokeStyle = `rgba(128, 63, 190, ${0.42 - i * 0.08})`;
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 46 + i * 28, t * (1.4 + i * 0.2), t * (1.4 + i * 0.2) + Math.PI * 1.5);
+          ctx.stroke();
+        }
+        ctx.fillStyle = '#07030d';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 28 + Math.sin(t * 5) * 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        for (const meteor of boss.voidMeteors) {
+          ctx.save();
+          const impact = meteor.impact > 0;
+          ctx.fillStyle = impact ? 'rgba(255, 248, 190, .48)' : 'rgba(225, 35, 45, .22)';
+          ctx.strokeStyle = impact ? 'rgba(255, 250, 210, .95)' : 'rgba(255, 80, 70, .92)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(meteor.x, meteor.y, meteor.radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          if (!impact) {
+            ctx.fillStyle = 'rgba(255, 80, 70, .9)';
+            ctx.fillRect(meteor.x - 2, meteor.y - meteor.radius, 4, meteor.radius * 2);
+            ctx.fillRect(meteor.x - meteor.radius, meteor.y - 2, meteor.radius * 2, 4);
+            const fall = clamp(1 - meteor.timer / 1.1, 0, 1);
+            const fy = -30 + (meteor.y + 30) * fall;
+            ctx.fillStyle = 'rgba(255, 190, 90, .38)';
+            ctx.fillRect(meteor.x - 5, Math.max(0, fy - 90), 10, 90);
+            ctx.fillStyle = '#fff0b0';
+            ctx.beginPath();
+            ctx.arc(meteor.x, fy, 10, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ffb04a';
+            ctx.beginPath();
+            ctx.arc(meteor.x, fy, 5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+      }
+
+      if (boss.skillState === 'chainWarn' || boss.skillState === 'chainStrike') {
+        const strike = boss.skillState === 'chainStrike';
+        ctx.save();
+        ctx.fillStyle = strike
+          ? 'rgba(255, 226, 130, .42)'
+          : `rgba(225, 35, 45, ${0.24 + Math.abs(Math.sin(boss.walkTime * 10)) * 0.12})`;
+        ctx.fillRect(boss.chainTarget.x - 140, boss.chainTarget.y - 24, 280, 48);
+        ctx.fillRect(boss.chainTarget.x - 24, boss.chainTarget.y - 140, 48, 280);
+        ctx.strokeStyle = strike
+          ? 'rgba(255, 250, 210, .95)'
+          : 'rgba(255, 75, 65, .95)';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(boss.chainTarget.x - 140, boss.chainTarget.y - 24, 280, 48);
+        ctx.strokeRect(boss.chainTarget.x - 24, boss.chainTarget.y - 140, 48, 280);
+        ctx.restore();
+      }
+
+      if (boss.skillState === 'wrathWarn' || boss.skillState === 'wrathStrike') {
+        const strike = boss.skillState === 'wrathStrike';
+        ctx.save();
+        if (!strike) {
+          ctx.fillStyle = `rgba(225, 35, 45, ${0.18 + Math.abs(Math.sin(boss.walkTime * 9)) * 0.14})`;
+          ctx.strokeStyle = 'rgba(255, 80, 70, .95)';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(boss.wrathTarget.x, boss.wrathTarget.y, 108, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.setLineDash([14, 10]);
+          ctx.beginPath();
+          ctx.arc(boss.wrathTarget.x, boss.wrathTarget.y, 70, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        } else {
+          ctx.fillStyle = 'rgba(255, 238, 165, .72)';
+          ctx.fillRect(boss.wrathTarget.x - 28, 0, 56, boss.wrathTarget.y);
+          ctx.strokeStyle = '#fff8dc';
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          ctx.moveTo(boss.wrathTarget.x + 4, 0);
+          ctx.lineTo(boss.wrathTarget.x - 16, boss.wrathTarget.y * 0.35);
+          ctx.lineTo(boss.wrathTarget.x + 12, boss.wrathTarget.y * 0.65);
+          ctx.lineTo(boss.wrathTarget.x - 6, boss.wrathTarget.y);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(boss.wrathTarget.x, boss.wrathTarget.y, 108, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      if (boss.skillState === 'barrageWindup') {
+        ctx.save();
+        ctx.globalAlpha = 0.22 + Math.abs(Math.sin(boss.walkTime * 16)) * 0.2;
+        ctx.fillStyle = '#ffe08a';
+        ctx.beginPath();
+        ctx.arc(x, y, 130, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      ctx.save();
+      const lift = boss.skillState === 'wrathWarn'
+        ? -52
+        : (boss.skillState === 'swordWarn'
+          ? -92
+          : (boss.skillState === 'swordStrike' ? -46 : 0));
+      const bob = Math.sin(boss.walkTime * 1.7) * 5;
+      ctx.translate(x, y + lift + bob);
+      if (dying) {
+        ctx.globalAlpha = 1 - progress * 0.85;
+        ctx.translate(0, progress * 30);
+      }
+
+      // 狂暴/终焉阶段的金红神光。
+      if (boss.rageMode || boss.skillState === 'ultimate') {
+        const glow = boss.skillState === 'ultimate' ? 0.32 : 0.18;
+        ctx.save();
+        ctx.globalAlpha = glow + Math.abs(Math.sin(boss.walkTime * 5)) * 0.08;
+        ctx.fillStyle = boss.skillState === 'ultimate' ? '#ffe08a' : '#c53a26';
+        ctx.beginPath();
+        ctx.arc(0, 0, boss.skillState === 'ultimate' ? 165 : 148, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 0.6;
+        ctx.strokeStyle = boss.skillState === 'ultimate' ? '#fff6cf' : '#e7bf58';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(0, 0, boss.skillState === 'ultimate' ? 142 : 128, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      ctx.imageSmoothingEnabled = false;
+      const art = bossArt.deity;
+      const size = 240;
+      if (art && art.ready) {
+        const sprite = flash && art.flash ? art.flash : art.source;
+        // 正面图，不水平翻转；视觉240×240，Hitbox仍为160×160。
+        ctx.drawImage(sprite, -size / 2, -size / 2, size, size);
+      } else {
+        ctx.fillStyle = flash ? '#ffffff' : '#d8b04e';
+        ctx.fillRect(-110, -110, 220, 220);
+      }
+      ctx.restore();
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(30, 20, 8, .22)';
+      ctx.beginPath();
+      ctx.ellipse(x, y + 112, 78, 18, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      for (const orb of boss.holyOrbs || []) {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, orb.life);
+        ctx.fillStyle = 'rgba(255, 221, 118, .24)';
+        ctx.beginPath();
+        ctx.arc(orb.x, orb.y, orb.radius + 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#b78d2c';
+        ctx.beginPath();
+        ctx.arc(orb.x, orb.y, orb.radius + 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fff4c2';
+        ctx.beginPath();
+        ctx.arc(orb.x, orb.y, orb.radius * 0.72, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      for (const wave of boss.phantomWaves || []) {
+        ctx.save();
+        ctx.translate(wave.x, wave.y);
+        ctx.rotate(wave.angle);
+        ctx.fillStyle = 'rgba(255, 255, 255, .92)';
+        ctx.fillRect(-wave.width / 2, -wave.height / 2, wave.width, wave.height);
+        ctx.fillStyle = 'rgba(255, 238, 170, .75)';
+        ctx.fillRect(-wave.width / 2, -3, wave.width, 6);
+        ctx.restore();
+      }
+    }
 
     drawAbyssWave(ctx, wave, time) {
       const horizontal = wave.dir === 'right' || wave.dir === 'left';
@@ -4438,6 +5589,10 @@
         this.drawAbyssWhale(ctx, boss);
         return;
       }
+      if (boss.type === 'deity') {
+        this.drawDeity(ctx, boss);
+        return;
+      }
       if (boss.type === 'sandworm' && boss.burrowed) {
         this.drawSandworm(ctx, boss);
         return;
@@ -4663,6 +5818,6 @@
 
   Object.assign(PF, {
     BossTree, Boss, SwampFrogBoss, SandwormBoss, SnowmanChiefBoss,
-    LavaDragonBoss, EvilMageBoss, AbyssWhaleBoss, BossSystems
+    LavaDragonBoss, EvilMageBoss, AbyssWhaleBoss, DeityBoss, BossSystems
   });
 })(window);

@@ -9,7 +9,8 @@
   const { CFG, PALETTE, ENEMY_ARCHETYPES, LEVELS } = PF;
   const {
     Player, Tree, Enemy, Boss, SwampFrogBoss, SandwormBoss, SnowmanChiefBoss,
-    LavaDragonBoss, EvilMageBoss, AbyssWhaleBoss, GasPod, Cactus, Campfire
+    LavaDragonBoss, EvilMageBoss, AbyssWhaleBoss, DeityBoss,
+    GasPod, Cactus, Campfire
   } = PF;
   const {
     clamp, distance, randomRange, aabbOverlap, pointInRect, expandRect, moveBody
@@ -1434,6 +1435,40 @@
     };
   }
 
+  function makeDivineBossRoom(game, level, index, totalRooms) {
+    const entry = { x: 640, y: 700 };
+    const doors = makeDoors(index, totalRooms);
+    return {
+      index,
+      kind: 'boss',
+      templateId: 'level8-divine',
+      templateName: '神明之巅',
+      entry,
+      exitDoor: null,
+      doors,
+      enemies: [],
+      trees: [],
+      pods: [],
+      poisonPuddles: [],
+      cacti: [],
+      quicksandZones: [],
+      curseSandZones: [],
+      campfires: [],
+      lavaPools: [],
+      obsidianWalls: [],
+      spikeTraps: [],
+      whirlpools: [],
+      boss: null,
+      unlocked: false,
+      openProgress: 0,
+      initialEnemyCount: 0,
+      cleared: false,
+      visited: false,
+      levelMechanics: level.mechanics,
+      treeBudget: 0
+    };
+  }
+
   function createSpikeTraps(level, safeZones, isBoss = false) {
     const cfg = level.mechanics.spikes;
     const target = isBoss ? 3 : randomInt(cfg.countMin, cfg.countMax);
@@ -1734,6 +1769,13 @@
       return rooms;
     }
 
+    if (level.id === 8) {
+      return [
+        makeSpawnRoom(level, 2),
+        makeDivineBossRoom(game, level, 1, 2)
+      ];
+    }
+
     const templates = level.roomTemplates || ROOM_TEMPLATES;
     const pickTemplate = () => templates[
       Math.floor(Math.random() * templates.length)
@@ -1851,6 +1893,8 @@
         room.spikeTraps = createSpikeTraps(level, safeZones, true);
       } else if (levelId === 7) {
         room.whirlpools = createWhirlpools(level, safeZones, true);
+      } else if (levelId === 8) {
+        // 最终层无小怪、陷阱或环境交互物。
       } else {
         return false;
       }
@@ -1882,6 +1926,7 @@
       else if (levelId === 5) BossClass = LavaDragonBoss;
       else if (levelId === 6) BossClass = EvilMageBoss;
       else if (levelId === 7) BossClass = AbyssWhaleBoss;
+      else if (levelId === 8) BossClass = DeityBoss;
       room.boss = new BossClass(this);
       this.boss = room.boss;
       this.bossRoomExitUnlocked = false;
@@ -1967,6 +2012,14 @@
       this.evilRays = [];
       this.executionerHooks = [];
       this.spikes = [];
+      this.cinematic = null;
+      this.divineIntroPlayed = false;
+      this.divineOrb = null;
+      this.divineWhisper = null;
+      if (this.divineDialog) {
+        this.divineDialog.hidden = true;
+        this.divineDialog.style.display = 'none';
+      }
       this.blizzardTimer = 0;
       this.blizzardActive = false;
       this.gasExplosions = [];
@@ -2150,6 +2203,7 @@
           else if (this.currentLevelId === 5) BossClass = LavaDragonBoss;
           else if (this.currentLevelId === 6) BossClass = EvilMageBoss;
           else if (this.currentLevelId === 7) BossClass = AbyssWhaleBoss;
+          else if (this.currentLevelId === 8) BossClass = DeityBoss;
           room.boss = new BossClass(this);
         }
         this.boss = room.boss;
@@ -2165,9 +2219,11 @@
         this.player.x = room.entry.x;
         this.player.y = room.entry.y;
         this.showToast(
-          this.currentLevelId === 7
-            ? '深渊巨鲸苏醒 · 潮汐开始翻涌'
-            : this.currentLevelId === 6
+          this.currentLevelId === 8
+            ? '神明之巅 · 最后的对话'
+            : this.currentLevelId === 7
+              ? '深渊巨鲸苏醒 · 潮汐开始翻涌'
+              : this.currentLevelId === 6
               ? '邪恶法师苏醒 · 黑暗笼罩了地牢'
               : this.currentLevelId === 5
               ? '熔岩巨龙苏醒 · 身后的门已封锁'
@@ -2243,6 +2299,10 @@
       this.forestTrees = this.trees;
       this.forestEnemies = this.enemies;
       if (this.player) this.player.potionCharges = CFG.POTION.CHARGES;
+      if (index === 0 && room.kind === 'spawn' &&
+        this.currentLevelId >= 1 && this.currentLevelId <= 7) {
+        this.startDivineWhisper(this.currentLevelId);
+      }
       this.updateHud(true);
     }
 

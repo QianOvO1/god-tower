@@ -854,7 +854,7 @@
       label: '深渊行刑者',
       isElite: true,
       hp: 15,
-      radius: 27,
+      radius: 24,
       contactDamage: 5,
       speedPatrol: 26,
       speedChase: 42,
@@ -1596,6 +1596,66 @@
         firefly: {
           rgb: '126, 221, 244',
           glow: 'rgba(70, 190, 230, .13)'
+        }
+      }
+    },
+
+    Level8: {
+      id: 8,
+      key: 'Level8',
+      name: '神明之巅',
+      layerName: '最终层',
+      themeName: 'divine',
+      enemyTypes: [],
+      boss: {
+        type: 'deity',
+        name: '神明',
+        maxHp: 500
+      },
+      roomPlan: ['spawn', 'boss'],
+      combatRoomMin: 0,
+      combatRoomMax: 0,
+      enemyBudget: {
+        gruntMin: 0,
+        gruntMax: 0,
+        eliteMin: 0,
+        eliteMax: 0
+      },
+      spawnZones: [],
+      mechanics: {},
+      theme: {
+        outside: '#f3ead4',
+        floor: {
+          a: '#eee3c9',
+          b: '#e6d8ba',
+          line: '#d6c49e',
+          spawnMark: 'rgba(166, 126, 46, .14)',
+          grass: ['#d7c69e', '#c9b582', '#bca56e'],
+          flower: '#c49a3d',
+          flowerCenter: '#fff6d5',
+          stone: '#d8c9a7',
+          stoneLight: '#f8f0dc',
+          leaf: '#b7a16e'
+        },
+        wall: {
+          dark: '#8d7139',
+          topA: '#d8bf83',
+          topB: '#c5a968',
+          topLight: '#f9efcf',
+          seam: '#a88c51',
+          moss: '#c8a85d',
+          bottomA: '#c9ad6c',
+          bottomB: '#b59655',
+          bottomLight: '#f4e5ba',
+          leftA: '#cbb072',
+          leftB: '#b39555',
+          leftLight: '#f5e5b9',
+          innerShadow: 'rgba(85, 60, 18, .28)',
+          innerEdge: 'rgba(255, 244, 200, .72)'
+        },
+        firefly: {
+          rgb: '255, 229, 151',
+          glow: 'rgba(255, 218, 112, .16)'
         }
       }
     }

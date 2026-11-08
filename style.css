@@ -94,6 +94,8 @@ body::before {
 }
 
 .stage[data-ui-state="MENU"] #gameCanvas,
+.stage[data-ui-state="INTRO"] #gameCanvas,
+.stage[data-ui-state="ENDING"] #gameCanvas,
 .stage[data-ui-state="LOADING"] #gameCanvas,
 .stage[data-ui-state="DEAD"] #gameCanvas,
 .stage[data-ui-state="REWARD"] #gameCanvas {
@@ -850,6 +852,33 @@ body::before {
   color: #74777d;
   font-size: 9px;
   letter-spacing: 1.2px;
+}
+
+.loading-diary {
+  max-width: 560px;
+  margin: 30px auto 0;
+  padding: 10px 0 0 16px;
+  border-left: 2px solid #6e5a35;
+  text-align: left;
+}
+
+.loading-diary[hidden] { display: none; }
+
+.loading-diary__label {
+  display: block;
+  margin-bottom: 6px;
+  color: #8d7b55;
+  font-size: 9px;
+  letter-spacing: 3px;
+}
+
+.loading-diary__text {
+  margin: 0;
+  color: #b7b0a0;
+  font-family: "Microsoft YaHei", "Courier New", monospace;
+  font-size: clamp(11px, 1.2vw, 13px);
+  line-height: 1.9;
+  letter-spacing: .6px;
 }
 
 /* ---------- 死亡 ---------- */
